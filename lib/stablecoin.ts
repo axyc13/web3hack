@@ -1,5 +1,5 @@
 import { Contract, ethers, formatUnits, parseUnits, Wallet } from "ethers";
-import { chains } from "./chains";
+import { chainById } from "./chains";
 import { decryptText } from "./crypto";
 
 const erc20Abi = [
@@ -7,22 +7,22 @@ const erc20Abi = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 
-export async function sendSepoliaUsdc(input: {
+export async function sendBaseDnzd(input: {
   encryptedPrivateKey: string;
   recipientAddress: string;
   amount: string;
 }) {
-  const chain = chains.find((item) => item.id === 11155111);
-  const token = chain?.tokens.find((item) => item.symbol === "USDC");
+  const chain = chainById(84532);
+  const token = chain?.tokens.find((item) => item.symbol === "dNZD");
   if (!chain || !token?.address) {
-    throw new Error("Sepolia USDC is not configured. Set SEPOLIA_USDC_ADDRESS in .env or use the default Circle test token.");
+    throw new Error("Base Sepolia dNZD is not configured. Set BASE_DNZD_ADDRESS in .env.");
   }
 
   const provider = new ethers.JsonRpcProvider(chain.rpcUrl, chain.id);
   const wallet = new Wallet(decryptText(input.encryptedPrivateKey), provider);
   const gasBalance = await provider.getBalance(wallet.address);
   if (gasBalance === 0n) {
-    throw new Error(`Fund ${wallet.address} with Sepolia ETH for gas before sending test USDC.`);
+    throw new Error(`Fund ${wallet.address} with Base Sepolia ETH for gas before sending dNZD.`);
   }
 
   const contract = new Contract(token.address, erc20Abi, wallet);
@@ -30,7 +30,7 @@ export async function sendSepoliaUsdc(input: {
   const tokenBalance = (await contract.balanceOf(wallet.address)) as bigint;
   if (tokenBalance < amountRaw) {
     throw new Error(
-      `Fund ${wallet.address} with Sepolia USDC before sending. Current test USDC balance is ${formatUnits(tokenBalance, token.decimals)}.`,
+      `Fund ${wallet.address} with dNZD before sending. Current dNZD balance is ${formatUnits(tokenBalance, token.decimals)}.`,
     );
   }
 

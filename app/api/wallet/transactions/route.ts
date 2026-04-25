@@ -7,11 +7,12 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const user = await requireUser();
-    if (!user.wallet_address) {
+    const address = user.linked_wallet_address || user.wallet_address;
+    if (!address) {
       return NextResponse.json({ transactions: [] });
     }
 
-    const transactions = await getWalletTransactions(user.id, user.wallet_address);
+    const transactions = await getWalletTransactions(user.id, address);
     return NextResponse.json({ transactions });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not load transactions";

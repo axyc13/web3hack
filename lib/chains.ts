@@ -18,19 +18,19 @@ export type ChainConfig = {
 
 export const chains: ChainConfig[] = [
   {
-    id: 11155111,
-    name: "Sepolia",
-    rpcUrl: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia.publicnode.com",
-    explorer: "https://sepolia.etherscan.io/tx/",
-    blockscoutApi: "https://eth-sepolia.blockscout.com/api/v2",
-    native: { symbol: "ETH", name: "Sepolia Ether", decimals: 18, native: true },
+    id: 84532,
+    name: "Base Sepolia",
+    rpcUrl: process.env.BASE_RPC_URL || "https://sepolia.base.org",
+    explorer: "https://sepolia.basescan.org/tx/",
+    blockscoutApi: "https://base-sepolia.blockscout.com/api/v2",
+    native: { symbol: "ETH", name: "Base Sepolia Ether", decimals: 18, native: true },
     tokens: [
       {
-        symbol: "USDC",
-        name: "USD Coin test token",
-        decimals: 6,
-        address: (process.env.SEPOLIA_USDC_ADDRESS ||
-          "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238") as `0x${string}`,
+        symbol: "dNZD",
+        name: "NewMoney dNZD",
+        decimals: Number(process.env.BASE_DNZD_DECIMALS || 6),
+        address: (process.env.BASE_DNZD_ADDRESS ||
+          "0x63ee4b77d3912DC7bCe711c3BE7bF12D532F1853") as `0x${string}`,
       },
     ],
   },

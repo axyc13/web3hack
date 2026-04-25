@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 
 const schema = z.object({
   flow: z.enum(["buy", "sell"]),
+  currency: z.enum(["USD", "NZD"]).default("USD"),
 });
 
 export async function POST(request: Request) {
@@ -34,9 +35,9 @@ export async function POST(request: Request) {
       : `https://${partner}.banxa.com`;
     const returnUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001";
     const params = new URLSearchParams({
-      coinType: "ETH",
-      fiatType: "USD",
-      blockchain: "ETH",
+      coinType: input.currency === "NZD" ? "dNZD" : "ETH",
+      fiatType: input.currency,
+      blockchain: input.currency === "NZD" ? "BASE" : "ETH",
       walletAddress: user.wallet_address,
       returnUrl,
       theme: "light",
