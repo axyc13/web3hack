@@ -148,6 +148,15 @@ type WalletFormState = {
   walletAddress: string;
 };
 
+type TransferConfirmation = {
+  source: "manual" | "ai";
+  amountNzd: string;
+  amountValue: number;
+  fromWalletAddress: string;
+  recipientInput: string;
+  prepared: PreparedTransfer;
+};
+
 type DashboardView = "overview" | "pay" | "activity" | "profile";
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
@@ -219,6 +228,8 @@ export default function Home() {
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletStatus, setWalletStatus] = useState("");
   const [walletError, setWalletError] = useState("");
+  const [transferConfirmation, setTransferConfirmation] = useState<TransferConfirmation | null>(null);
+  const [confirmationError, setConfirmationError] = useState("");
   const [automation, setAutomation] = useState<AutomationSettings>(DEFAULT_AUTOMATION_SETTINGS);
   const [savedRecipients, setSavedRecipients] = useState<SavedRecipient[]>([]);
   const [automationBusy, setAutomationBusy] = useState(false);
@@ -663,48 +674,68 @@ export default function Home() {
     await saveRecipient(recipient);
   }
 
+  async function requestTransferConfirmation(input: {
+    source: "manual" | "ai";
+    recipient: string;
+    amountNzd: string;
+    walletAddress: string;
+  }) {
+    const amountValue = Number(input.amountNzd);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      throw new Error("Enter a dNZD amount greater than 0.");
+    }
+    if (bankBalanceNzd < amountValue) {
+      throw new Error("Insufficient dNZD balance.");
+    }
+    if (!input.walletAddress) {
+      throw new Error("Select a wallet to pay from first.");
+    }
+
+    const prepared = await api<PreparedTransfer>("/api/app/prepare-send", {
+      recipient: input.recipient,
+      amountNzd: input.amountNzd,
+    });
+
+    setTransferConfirmation({
+      source: input.source,
+      amountNzd: input.amountNzd,
+      amountValue,
+      fromWalletAddress: input.walletAddress,
+      recipientInput: input.recipient,
+      prepared,
+    });
+    setConfirmationError("");
+  }
+
   async function sendTransfer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSendError("");
-    setBusy(true);
     setSendStatus("");
     setSendLink("");
+    setBusy(true);
     try {
-      const amountValue = Number(amount);
-      if (!Number.isFinite(amountValue) || amountValue <= 0) {
-        throw new Error("Enter a dNZD amount greater than 0.");
-      }
-      if (bankBalanceNzd < amountValue) {
-        throw new Error("Insufficient dNZD balance.");
-      }
-
-      const data = await sendFromSelectedWallet(activePaymentWallet);
-
-      setSendStatus(`Sent ${formatCurrency(amountValue, "NZD", "NZ")} to @${data.recipient.username}.`);
-      setSendLink(`${BASE_SEPOLIA_EXPLORER}${data.txHash}`);
-      setAmount("");
-      setRecipient("");
-      setActiveView("activity");
-      await Promise.all([loadTransactions(), loadBalances()]);
+      await requestTransferConfirmation({
+        source: "manual",
+        recipient,
+        amountNzd: amount,
+        walletAddress: activePaymentWallet,
+      });
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Could not send money");
+      setSendError(err instanceof Error ? err.message : "Could not prepare transfer");
     } finally {
       setBusy(false);
     }
   }
 
-  async function sendFromSelectedWallet(walletAddress: string) {
+  async function sendFromSelectedWallet(confirmation: TransferConfirmation) {
+    const walletAddress = confirmation.fromWalletAddress;
     if (!walletAddress) {
       throw new Error("Select a wallet to pay from first.");
     }
     if (!window.ethereum?.request) {
       throw new Error("No browser wallet found. Open this app in a wallet browser or install MetaMask.");
     }
-
-    const prepared = await api<PreparedTransfer>("/api/app/prepare-send", {
-      recipient,
-      amountNzd: amount,
-    });
+    const prepared = confirmation.prepared;
 
     await switchToBaseSepolia();
     const provider = new BrowserProvider(window.ethereum);
@@ -716,7 +747,7 @@ export default function Home() {
 
     const signer = await provider.getSigner(selected);
     const token = new Contract(prepared.token.address, erc20BalanceAbi, signer);
-    const amountRaw = parseUnits(amount, prepared.token.decimals);
+    const amountRaw = parseUnits(confirmation.amountNzd, prepared.token.decimals);
     const tokenBalance = (await token.balanceOf(selected)) as bigint;
     if (tokenBalance < amountRaw) {
       throw new Error("Linked wallet does not have enough dNZD for this payment.");
@@ -729,11 +760,39 @@ export default function Home() {
     }
 
     return api<{ txHash: string; recipient: { name: string; username: string } }>("/api/app/record-send", {
-      recipient,
-      amountNzd: amount,
+      recipient: confirmation.recipientInput,
+      amountNzd: confirmation.amountNzd,
       txHash: receipt.hash,
       chainId: prepared.chainId,
     });
+  }
+
+  async function confirmTransfer() {
+    if (!transferConfirmation) return;
+
+    setBusy(true);
+    setConfirmationError("");
+    setSendError("");
+    setSendStatus("");
+    setSendLink("");
+    try {
+      const data = await sendFromSelectedWallet(transferConfirmation);
+      setSendStatus(
+        `Sent ${formatCurrency(transferConfirmation.amountValue, "NZD", "NZ")} to @${data.recipient.username}.`,
+      );
+      setSendLink(`${BASE_SEPOLIA_EXPLORER}${data.txHash}`);
+      setAmount("");
+      setRecipient("");
+      setTransferConfirmation(null);
+      setActiveView("activity");
+      await Promise.all([loadTransactions(), loadBalances()]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not send money";
+      setConfirmationError(message);
+      setSendError(message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function switchToBaseSepolia() {
@@ -774,12 +833,14 @@ export default function Home() {
     setProfileEditMode(false);
     setContactEditMode(false);
     setWalletEditMode(false);
+    setTransferConfirmation(null);
     setAutomation(DEFAULT_AUTOMATION_SETTINGS);
     setSavedRecipients([]);
     setAutomationError("");
     setAutomationStatus("");
     setWalletError("");
     setWalletStatus("");
+    setConfirmationError("");
     setActiveView("overview");
   }
 
@@ -817,6 +878,9 @@ export default function Home() {
       : "AI assist only";
   const balanceTimeline = buildBalanceTimeline(transactions, bankBalanceDisplay, fx.rate || 1);
   const activeBalancePoint = balanceTimeline[balanceTimeline.length - 1];
+  const confirmationDisplayAmount = transferConfirmation
+    ? transferConfirmation.amountValue * (fx.rate || 1)
+    : 0;
 
   if (loadingUser) {
     return (
@@ -1669,6 +1733,77 @@ export default function Home() {
           </section>
         </div>
       </section>
+
+      {transferConfirmation && (
+        <div className="confirmation-overlay" role="presentation">
+          <div className="confirmation-modal surface-panel" role="dialog" aria-modal="true" aria-labelledby="transfer-confirmation-title">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">Confirm transfer</p>
+                <h3 id="transfer-confirmation-title">Review before sending money</h3>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  setTransferConfirmation(null);
+                  setConfirmationError("");
+                }}
+                aria-label="Close transfer confirmation"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="confirmation-grid">
+              <div className="profile-box">
+                <span className="section-label">Recipient</span>
+                <strong>{transferConfirmation.prepared.recipient.name}</strong>
+                <small>@{transferConfirmation.prepared.recipient.username}</small>
+                <small>{shortAddress(transferConfirmation.prepared.recipientWalletAddress)}</small>
+              </div>
+
+              <div className="profile-box">
+                <span className="section-label">Amount</span>
+                <strong>{formatCurrency(transferConfirmation.amountValue, "NZD", "NZ")} dNZD</strong>
+                <small>{formatCurrency(confirmationDisplayAmount, displayCurrency, user.regionCode)} {displayCurrency}</small>
+                <small>{transferConfirmation.source === "ai" ? "Prepared by AI assistant" : "Prepared manually"}</small>
+              </div>
+
+              <div className="profile-box">
+                <span className="section-label">Pay from</span>
+                <strong>{shortAddress(transferConfirmation.fromWalletAddress)}</strong>
+                <small>Base Sepolia</small>
+                <small>dNZD transfer with wallet signature</small>
+              </div>
+            </div>
+
+            <p className="muted-copy">
+              PocketRail will ask your linked wallet to sign this transfer after you confirm. This review step is shown for both manual and AI-assisted payments.
+            </p>
+
+            {confirmationError && <p className="error">{confirmationError}</p>}
+
+            <div className="confirmation-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setTransferConfirmation(null);
+                  setConfirmationError("");
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button type="button" className="primary" onClick={() => void confirmTransfer()} disabled={busy}>
+                {busy ? <Loader2 className="spin" size={18} /> : <BadgeCheck size={18} />}
+                Confirm and continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

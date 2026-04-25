@@ -970,6 +970,38 @@ select:focus {
   color: var(--muted);
 }
 
+.confirmation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.36);
+  backdrop-filter: blur(10px);
+}
+
+.confirmation-modal {
+  width: min(100%, 640px);
+  padding: 24px;
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.confirmation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 20px 0 18px;
+}
+
+.confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+
 .toggle-button {
   width: 48px;
   min-width: 48px;
@@ -1189,6 +1221,7 @@ select:focus {
   .overview-grid,
   .modern-grid,
   .hero-balance,
+  .confirmation-grid,
   .pay-top-grid,
   .settings-grid {
     grid-template-columns: 1fr;
@@ -1237,6 +1270,7 @@ select:focus {
   .hero-actions,
   .action-list,
   .inline-actions,
+  .confirmation-actions,
   .recipient-card,
   .recipient-actions {
     flex-direction: column;
