@@ -2,6 +2,7 @@
 
 import { BrowserProvider, Contract, parseUnits } from "ethers";
 import { useEffect, useState } from "react";
+import { REGION_OPTIONS } from "@/lib/currency";
 import {
   ArrowRight,
   Eye,
@@ -24,6 +25,8 @@ type User = {
   linkedWalletAddress: string | null;
   walletKind: "external" | null;
   ensName: string | null;
+  regionCode: string;
+  preferredCurrency: string;
 };
 
 type WalletTransaction = {
@@ -78,6 +81,11 @@ type PreparedTransfer = {
   };
 };
 
+type FxState = {
+  rate: number;
+  preferredCurrency: string;
+};
+
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const BASE_SEPOLIA_CHAIN_HEX = "0x14a34";
 const BASE_SEPOLIA_RPC_URL = "https://sepolia.base.org";
@@ -93,6 +101,7 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [balanceGroups, setBalanceGroups] = useState<WalletBalanceGroup[]>([]);
+  const [fx, setFx] = useState<FxState>({ rate: 1, preferredCurrency: "NZD" });
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [authStatus, setAuthStatus] = useState("");
@@ -109,7 +118,11 @@ export default function Home() {
     email: "",
     password: "",
     walletAddress: "",
+    regionCode: "NZ",
   });
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileStatus, setProfileStatus] = useState("");
+  const [profileError, setProfileError] = useState("");
   const [usernameState, setUsernameState] = useState<{
     checking: boolean;
     available: boolean;
@@ -128,6 +141,11 @@ export default function Home() {
     void loadTransactions();
     void loadBalances();
   }, [user?.walletAddress]);
+
+  useEffect(() => {
+    if (!user) return;
+    void loadFx(user.regionCode);
+  }, [user?.regionCode]);
 
   useEffect(() => {
     if (!user?.walletAddress) return;
@@ -279,6 +297,33 @@ export default function Home() {
     }
   }
 
+  async function loadFx(regionCode: string) {
+    try {
+      const data = await api<{ rate: number; preferredCurrency: string }>(`/api/fx?regionCode=${encodeURIComponent(regionCode)}`);
+      setFx({
+        rate: data.rate || 1,
+        preferredCurrency: data.preferredCurrency || "NZD",
+      });
+    } catch {
+      setFx({ rate: 1, preferredCurrency: "NZD" });
+    }
+  }
+
+  async function updateRegion(regionCode: string) {
+    setProfileBusy(true);
+    setProfileError("");
+    setProfileStatus("");
+    try {
+      const data = await api<{ user: User }>("/api/profile", { regionCode });
+      setUser(data.user);
+      setProfileStatus("Display region updated.");
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : "Could not update profile");
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
   async function sendTransfer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSendError("");
@@ -296,7 +341,7 @@ export default function Home() {
 
       const data = await sendFromLinkedWallet();
 
-      setSendStatus(`Sent ${formatCurrency(amountValue, "NZD")} to @${data.recipient.username}.`);
+      setSendStatus(`Sent ${formatCurrency(amountValue, "NZD", "NZ")} to @${data.recipient.username}.`);
       setSendLink(`${BASE_SEPOLIA_EXPLORER}${data.txHash}`);
       setAmount("");
       setRecipient("");
@@ -393,6 +438,12 @@ export default function Home() {
   const gasAsset = baseSepoliaAssets.find((asset) => asset.symbol === "ETH" && asset.native);
   const bankBalanceNzd = Number(dnzdAsset?.balance || "0");
   const gasBalanceEth = gasAsset?.balance || "0";
+  const userRegionCode = user?.regionCode || "NZ";
+  const displayCurrency = user?.preferredCurrency || fx.preferredCurrency;
+  const displayRegion = REGION_OPTIONS.find((option) => option.code === userRegionCode) || REGION_OPTIONS[0];
+  const bankBalanceDisplay = bankBalanceNzd * (fx.rate || 1);
+  const sendAmountValue = Number(amount);
+  const convertedSendAmount = Number.isFinite(sendAmountValue) ? sendAmountValue * (fx.rate || 1) : 0;
 
   if (loadingUser) {
     return <main className="center-screen"><Loader2 className="spin" /> Loading wallet...</main>;
@@ -427,7 +478,7 @@ export default function Home() {
             {authMode === "register" && (
               <label>
                 Username
-                <input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="ada" required minLength={3} />
+              <input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="ada" required minLength={3} />
                 {usernameState.message && (
                   <span className={usernameState.available ? "field-hint success-text" : "field-hint error-text"}>
                     {usernameState.message}
@@ -448,6 +499,22 @@ export default function Home() {
                 </button>
               </div>
             </label>
+
+            {authMode === "register" && (
+              <label>
+                Region
+                <select
+                  value={form.regionCode}
+                  onChange={(event) => setForm({ ...form, regionCode: event.target.value })}
+                >
+                  {REGION_OPTIONS.map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {option.label} ({option.currency})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             {authMode === "register" && (
               <div className="stack compact-stack">
@@ -491,18 +558,19 @@ export default function Home() {
       <section className="money-panel">
         <div className="money-hero">
           <span className="eyebrow">Bank balance</span>
-          <h2>{formatCurrency(bankBalanceNzd, "NZD")}</h2>
-          <p>Your live dNZD balance in your linked wallet on Base Sepolia.</p>
+          <h2>{formatCurrency(bankBalanceDisplay, displayCurrency, user.regionCode)}</h2>
+          <p>Your live dNZD balance shown in {displayRegion.label} currency.</p>
         </div>
         <div className="money-control">
           <div className="profile-box">
             <strong>Base Sepolia wallet</strong>
             <small>dNZD available: {shortAmount(dnzdAsset?.balance || "0")} dNZD</small>
             <small>ETH for gas: {shortAmount(gasBalanceEth)} ETH</small>
+            <small>Display region: {displayRegion.label} ({displayCurrency})</small>
             <small>Linked wallet {shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</small>
           </div>
           <p className="muted-copy compact-copy">
-            dNZD is the payment balance. ETH is only used to cover Base Sepolia gas fees.
+            Transfers still settle in dNZD. We only convert the on-screen display into the user&apos;s selected region currency.
           </p>
           {dataError && <p className="error">{dataError}</p>}
         </div>
@@ -520,9 +588,14 @@ export default function Home() {
               <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="@username or wallet address" required />
             </label>
             <label>
-              NZD amount
+              dNZD amount
               <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
             </label>
+            <p className="muted-copy compact-copy">
+              {Number.isFinite(sendAmountValue) && sendAmountValue > 0
+                ? `Shown to you as ${formatCurrency(convertedSendAmount, displayCurrency, user.regionCode)} in ${displayRegion.label}.`
+                : `Transfers settle in dNZD, while your dashboard displays ${displayCurrency}.`}
+            </p>
             {sendError && <p className="error">{sendError}</p>}
             {sendStatus && <p className="success">{sendStatus}</p>}
             {sendLink && (
@@ -545,7 +618,24 @@ export default function Home() {
             <strong>@{user.username}</strong>
             <span>{user.name}</span>
             <small>{user.email}</small>
+            <label>
+              Region
+              <select
+                value={user.regionCode}
+                onChange={(event) => void updateRegion(event.target.value)}
+                disabled={profileBusy}
+              >
+                {REGION_OPTIONS.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.label} ({option.currency})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <small>Display currency: {displayCurrency}</small>
             <small>Linked wallet {shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</small>
+            {profileError && <p className="error">{profileError}</p>}
+            {profileStatus && <p className="success">{profileStatus}</p>}
           </div>
         </section>
       </section>
@@ -608,8 +698,9 @@ function timeAgo(timestamp: string) {
   return `${days}d ago`;
 }
 
-function formatCurrency(value: number, currency: "NZD") {
-  return value.toLocaleString("en-NZ", {
+function formatCurrency(value: number, currency: string, regionCode: string) {
+  const locale = REGION_OPTIONS.find((option) => option.code === regionCode)?.locale || "en-NZ";
+  return value.toLocaleString(locale, {
     style: "currency",
     currency,
     maximumFractionDigits: 2,

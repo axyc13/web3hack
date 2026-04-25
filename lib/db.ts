@@ -15,6 +15,8 @@ export type DbUser = {
   encrypted_private_key: string | null;
   privy_user_id: string | null;
   nzd_balance_cents: number;
+  region_code: string;
+  preferred_currency: string;
   created_at: string;
 };
 
@@ -44,6 +46,8 @@ export function db() {
         encrypted_private_key TEXT,
         privy_user_id TEXT,
         nzd_balance_cents INTEGER NOT NULL DEFAULT 0,
+        region_code TEXT NOT NULL DEFAULT 'NZ',
+        preferred_currency TEXT NOT NULL DEFAULT 'NZD',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS sessions (
@@ -121,6 +125,12 @@ function ensureSchema(instance: DatabaseSync) {
   if (!columns.some((column) => column.name === "nzd_balance_cents")) {
     instance.exec("ALTER TABLE users ADD COLUMN nzd_balance_cents INTEGER NOT NULL DEFAULT 0");
   }
+  if (!columns.some((column) => column.name === "region_code")) {
+    instance.exec("ALTER TABLE users ADD COLUMN region_code TEXT NOT NULL DEFAULT 'NZ'");
+  }
+  if (!columns.some((column) => column.name === "preferred_currency")) {
+    instance.exec("ALTER TABLE users ADD COLUMN preferred_currency TEXT NOT NULL DEFAULT 'NZD'");
+  }
   instance.exec(`
     UPDATE users
     SET wallet_address = COALESCE(linked_wallet_address, wallet_address),
@@ -129,7 +139,18 @@ function ensureSchema(instance: DatabaseSync) {
           WHEN COALESCE(linked_wallet_address, wallet_address) IS NOT NULL THEN 'external'
           ELSE wallet_kind
         END,
-        encrypted_private_key = NULL
+        encrypted_private_key = NULL,
+        region_code = COALESCE(NULLIF(region_code, ''), 'NZ'),
+        preferred_currency = CASE
+          WHEN preferred_currency IS NOT NULL AND preferred_currency != '' THEN preferred_currency
+          WHEN region_code = 'AU' THEN 'AUD'
+          WHEN region_code = 'US' THEN 'USD'
+          WHEN region_code = 'GB' THEN 'GBP'
+          WHEN region_code = 'EU' THEN 'EUR'
+          WHEN region_code = 'SG' THEN 'SGD'
+          WHEN region_code = 'JP' THEN 'JPY'
+          ELSE 'NZD'
+        END
   `);
   const appTransferColumns = instance
     .prepare("PRAGMA table_info(app_transfers)")
@@ -178,6 +199,8 @@ export function publicUser(user: DbUser) {
     linkedWalletAddress: user.linked_wallet_address || user.wallet_address,
     walletKind: user.wallet_kind,
     ensName: user.ens_name,
+    regionCode: user.region_code,
+    preferredCurrency: user.preferred_currency,
     hasServerWallet: false,
     privyUserId: user.privy_user_id,
     createdAt: user.created_at,
