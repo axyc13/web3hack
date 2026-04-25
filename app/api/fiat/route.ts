@@ -9,7 +9,7 @@ export async function GET() {
     const user = await requireUser();
     return NextResponse.json({ fiat: getFiatAccount(user.id) });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not load NZD account";
+    const message = error instanceof Error ? error.message : "Could not load USD account";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

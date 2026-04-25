@@ -14,9 +14,9 @@ export async function POST(request: Request) {
     const input = schema.parse(await request.json());
     const user = await requireUser();
 
-    if (!user.encrypted_private_key) {
+    if (user.wallet_kind === "external" || !user.encrypted_private_key) {
       return NextResponse.json(
-        { error: "This wallet was linked externally or created by Privy, so PocketRail does not hold its private key." },
+        { error: "This account uses a linked wallet, so PocketRail does not export a private key for it." },
         { status: 400 },
       );
     }

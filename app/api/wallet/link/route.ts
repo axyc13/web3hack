@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireUser, userResponse } from "@/lib/auth";
 import { db, DbUser } from "@/lib/db";
 import { resolveEnsName } from "@/lib/ens";
+import { createEmbeddedWallet } from "@/lib/wallet";
 
 export const runtime = "nodejs";
 
@@ -20,13 +21,23 @@ export async function POST(request: Request) {
     }
     const user = await requireUser();
     const ensName = await resolveEnsName(input.walletAddress);
+    const internalWallet = user.encrypted_private_key
+      ? { address: user.wallet_address, encryptedPrivateKey: user.encrypted_private_key }
+      : createEmbeddedWallet();
     db()
       .prepare(
         `UPDATE users
-         SET wallet_address = ?, wallet_kind = 'external', ens_name = ?, encrypted_private_key = NULL, privy_user_id = COALESCE(?, privy_user_id)
+         SET wallet_address = ?, linked_wallet_address = ?, wallet_kind = 'external', ens_name = ?, encrypted_private_key = ?, privy_user_id = COALESCE(?, privy_user_id)
          WHERE id = ?`,
       )
-      .run(input.walletAddress, ensName, input.privyUserId || null, user.id);
+      .run(
+        internalWallet.address,
+        input.walletAddress,
+        ensName,
+        internalWallet.encryptedPrivateKey,
+        input.privyUserId || null,
+        user.id,
+      );
 
     const updated = db().prepare("SELECT * FROM users WHERE id = ?").get(user.id) as DbUser;
     return NextResponse.json(userResponse(updated));

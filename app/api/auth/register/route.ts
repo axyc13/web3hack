@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 
 const schema = z.object({
   name: z.string().min(2),
+  username: z.string().min(3).max(24).regex(/^[a-zA-Z0-9_]+$/),
   email: z.string().email(),
   password: z.string().min(8),
   walletMode: z.enum(["external", "embedded"]),
@@ -20,32 +21,40 @@ const schema = z.object({
 export async function POST(request: Request) {
   try {
     const input = schema.parse(await request.json());
+    const username = input.username.toLowerCase();
+    const existingUsername = db()
+      .prepare("SELECT id FROM users WHERE lower(username) = lower(?)")
+      .get(username);
+    if (existingUsername) {
+      return NextResponse.json({ error: "That username is already taken." }, { status: 409 });
+    }
     const passwordHash = await createPasswordHash(input.password);
-    let walletAddress = input.walletAddress || null;
-    let encryptedPrivateKey: string | null = null;
+    let linkedWalletAddress: string | null = null;
+    const wallet = createEmbeddedWallet();
+    const walletAddress = wallet.address;
+    const encryptedPrivateKey = wallet.encryptedPrivateKey;
 
     if (input.walletMode === "external") {
-      if (!walletAddress || !isAddress(walletAddress)) {
+      if (!input.walletAddress || !isAddress(input.walletAddress)) {
         return NextResponse.json({ error: "Connect a valid wallet first." }, { status: 400 });
       }
-    } else if (!walletAddress) {
-      const wallet = createEmbeddedWallet();
-      walletAddress = wallet.address;
-      encryptedPrivateKey = wallet.encryptedPrivateKey;
+      linkedWalletAddress = input.walletAddress;
     }
-    const ensName = await resolveEnsName(walletAddress);
+    const ensName = await resolveEnsName(linkedWalletAddress || walletAddress);
 
     const result = db()
       .prepare(
         `INSERT INTO users
-          (name, email, password_hash, wallet_address, wallet_kind, ens_name, encrypted_private_key, privy_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          (name, username, email, password_hash, wallet_address, linked_wallet_address, wallet_kind, ens_name, encrypted_private_key, privy_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.name,
+        username,
         input.email.toLowerCase(),
         passwordHash,
         walletAddress,
+        linkedWalletAddress,
         input.walletMode,
         ensName,
         encryptedPrivateKey,

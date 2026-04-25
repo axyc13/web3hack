@@ -15,7 +15,7 @@ export type CryptoQuote = {
   id: string;
   symbol: string;
   name: string;
-  nzd: number;
+  usd: number;
 };
 
 const metadata: Record<string, { symbol: string; name: string }> = {
@@ -31,22 +31,22 @@ const metadata: Record<string, { symbol: string; name: string }> = {
   "true-usd": { symbol: "TUSD", name: "TrueUSD" },
 };
 
-export async function getNzdQuotes(): Promise<CryptoQuote[]> {
-  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds.join(",")}&vs_currencies=nzd`;
+export async function getUsdQuotes(): Promise<CryptoQuote[]> {
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds.join(",")}&vs_currencies=usd`;
   const response = await fetch(url, {
     headers: { accept: "application/json" },
     next: { revalidate: 30 },
   });
   if (!response.ok) {
-    throw new Error("Could not fetch crypto/NZD quotes.");
+    throw new Error("Could not fetch crypto/USD quotes.");
   }
 
-  const data = (await response.json()) as Record<string, { nzd?: number }>;
+  const data = (await response.json()) as Record<string, { usd?: number }>;
   return cryptoIds
-    .filter((id) => typeof data[id]?.nzd === "number")
+    .filter((id) => typeof data[id]?.usd === "number")
     .map((id) => ({
       id,
       ...metadata[id],
-      nzd: data[id].nzd as number,
+      usd: data[id].usd as number,
     }));
 }

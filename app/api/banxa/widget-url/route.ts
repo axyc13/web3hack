@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     const returnUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001";
     const params = new URLSearchParams({
       coinType: "ETH",
-      fiatType: "NZD",
+      fiatType: "USD",
       blockchain: "ETH",
       walletAddress: user.wallet_address,
       returnUrl,

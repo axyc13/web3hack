@@ -27,9 +27,10 @@ export const chains: ChainConfig[] = [
     tokens: [
       {
         symbol: "USDC",
-        name: "USDC test token",
+        name: "USD Coin test token",
         decimals: 6,
-        address: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",
+        address: (process.env.SEPOLIA_USDC_ADDRESS ||
+          "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238") as `0x${string}`,
       },
     ],
   },

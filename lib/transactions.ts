@@ -33,14 +33,12 @@ export type WalletTransaction = {
   status: string;
   method: string | null;
   timestamp: string;
-  source: "explorer" | "local";
+  source: "explorer" | "local" | "app";
 };
 
 export async function getWalletTransactions(userId: number, address: string) {
-  const explorerTransactions = await Promise.all(
-    chains.map((chain) => getExplorerTransactions(chain, address)),
-  );
-  const localTransactions = getLocalTransactions(userId);
+  const explorerTransactions: WalletTransaction[] = [];
+  const localTransactions = [...getAppTransfers(userId), ...getLocalTransactions(userId)];
 
   const byKey = new Map<string, WalletTransaction>();
   for (const tx of [...explorerTransactions.flat(), ...localTransactions]) {
@@ -50,6 +48,56 @@ export async function getWalletTransactions(userId: number, address: string) {
   return [...byKey.values()].sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
   );
+}
+
+function getAppTransfers(userId: number): WalletTransaction[] {
+  const rows = db()
+    .prepare(
+      `SELECT app_transfers.id, sender_user_id, recipient_user_id, amount_cents, stable_symbol, tx_hash, chain_id, status, app_transfers.created_at,
+              sender.username AS sender_username, recipient.username AS recipient_username,
+              sender.wallet_address AS sender_wallet_address, recipient.wallet_address AS recipient_wallet_address
+       FROM app_transfers
+       JOIN users sender ON sender.id = app_transfers.sender_user_id
+       JOIN users recipient ON recipient.id = app_transfers.recipient_user_id
+       WHERE sender_user_id = ? OR recipient_user_id = ?
+       ORDER BY app_transfers.created_at DESC
+       LIMIT 50`,
+    )
+    .all(userId, userId) as Array<{
+      id: number;
+      sender_user_id: number;
+      recipient_user_id: number;
+      amount_cents: number;
+      stable_symbol: string;
+      tx_hash: string | null;
+      chain_id: number;
+      status: string;
+      created_at: string;
+      sender_username: string;
+      recipient_username: string;
+      sender_wallet_address: string | null;
+      recipient_wallet_address: string | null;
+    }>;
+
+  return rows.map((row) => {
+    const outgoing = row.sender_user_id === userId;
+    return {
+      hash: row.tx_hash || `internal-${row.id}`,
+      chainId: row.chain_id || 11155111,
+      chainName: "Sepolia",
+      explorerUrl: row.tx_hash ? `https://sepolia.etherscan.io/tx/${row.tx_hash}` : "",
+      direction: outgoing ? "outgoing" : "incoming",
+      from: `@${row.sender_username}`,
+      to: `@${row.recipient_username}`,
+      amount: (row.amount_cents / 100).toFixed(2),
+      symbol: row.stable_symbol || "USDC",
+      fee: null,
+      status: row.status,
+      method: row.stable_symbol === "ETH" ? "Sepolia ETH proof transfer" : "Sepolia USDC transfer",
+      timestamp: new Date(`${row.created_at}Z`).toISOString(),
+      source: "app",
+    };
+  });
 }
 
 async function getExplorerTransactions(
