@@ -1,5 +1,5 @@
 import { db, DbAutomationSettings } from "./db";
-import { findRecipientUser } from "./fiat";
+import { findRecipientUser, nzdToCents } from "./fiat";
 
 export type RecipientScope = "saved_only" | "any_registered";
 
@@ -29,6 +29,16 @@ export type AutomationOverview = {
   settings: AutomationSettings;
   recipients: SavedRecipient[];
   agentBrief: string;
+};
+
+export type AutomationTransferReview = {
+  allowed: boolean;
+  recipientAllowed: boolean;
+  channelAllowed: boolean;
+  exceedsSingleLimit: boolean;
+  exceedsDailyLimit: boolean;
+  requiresConfirmation: boolean;
+  reasons: string[];
 };
 
 type UpdateAutomationInput = {
@@ -177,6 +187,71 @@ export function isSavedRecipient(userId: number, recipientUserId: number) {
     .prepare("SELECT id FROM saved_recipients WHERE user_id = ? AND recipient_user_id = ?")
     .get(userId, recipientUserId);
   return Boolean(row);
+}
+
+export function reviewAutomationTransfer(userId: number, input: {
+  recipientUserId: number;
+  amountNzd: string;
+  channel?: string;
+}) {
+  const { settings } = getAutomationOverview(userId);
+  const amountCents = nzdToCents(input.amountNzd);
+  const channel = (input.channel || "dashboard").trim().toLowerCase();
+  const reasons: string[] = [];
+  const channelAllowed = settings.allowedChannels.includes(channel);
+  const recipientAllowed =
+    settings.recipientScope === "any_registered" || isSavedRecipient(userId, input.recipientUserId);
+  const exceedsSingleLimit = amountCents > toNonNegativeCents(settings.maxSingleAmountNzd, "single transfer limit");
+  const exceedsDailyLimit = amountCents > toNonNegativeCents(settings.dailyRemainingAmountNzd, "daily remaining limit");
+
+  if (!channelAllowed) {
+    reasons.push(`"${channel}" is not in your approved AI channels.`);
+  }
+  if (!recipientAllowed) {
+    reasons.push("This recipient is not allowed by your saved-recipient policy.");
+  }
+  if (exceedsSingleLimit) {
+    reasons.push(`This amount is above your single transfer limit of ${settings.maxSingleAmountNzd} dNZD.`);
+  }
+  if (exceedsDailyLimit) {
+    reasons.push(`This amount would exceed your remaining daily limit of ${settings.dailyRemainingAmountNzd} dNZD.`);
+  }
+
+  return {
+    allowed: reasons.length === 0,
+    recipientAllowed,
+    channelAllowed,
+    exceedsSingleLimit,
+    exceedsDailyLimit,
+    requiresConfirmation: true,
+    reasons,
+  } satisfies AutomationTransferReview;
+}
+
+export function findSavedRecipientByAlias(userId: number, identifier: string) {
+  const value = identifier.trim().toLowerCase();
+  if (!value) return null;
+  const plainValue = value.startsWith("@") ? value.slice(1) : value;
+
+  const recipient = listSavedRecipients(userId).find((item) => {
+    const nickname = item.nickname?.trim().toLowerCase();
+    return (
+      nickname === plainValue ||
+      item.username.toLowerCase() === plainValue ||
+      item.name.trim().toLowerCase() === plainValue
+    );
+  });
+
+  if (recipient) {
+    return recipient;
+  }
+
+  const matchedUser = findRecipientUser(identifier);
+  if (!matchedUser) {
+    return null;
+  }
+
+  return listSavedRecipients(userId).find((item) => item.recipientUserId === matchedUser.id) || null;
 }
 
 function listSavedRecipients(userId: number) {

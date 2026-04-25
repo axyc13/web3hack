@@ -1,7 +1,7 @@
 "use client";
 
 import { BrowserProvider, Contract, parseUnits } from "ethers";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -20,6 +20,7 @@ import {
   ExternalLink,
   History,
   Loader2,
+  MessageCircle,
   LogOut,
   Pencil,
   Send,
@@ -157,6 +158,20 @@ type TransferConfirmation = {
   prepared: PreparedTransfer;
 };
 
+type AiTransferProposal = {
+  recipientInput: string;
+  amountNzd: string;
+  fromWalletAddress: string;
+  prepared: PreparedTransfer;
+};
+
+type AiChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  transferProposal?: AiTransferProposal | null;
+};
+
 type DashboardView = "overview" | "pay" | "activity" | "profile";
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
@@ -230,6 +245,18 @@ export default function Home() {
   const [walletError, setWalletError] = useState("");
   const [transferConfirmation, setTransferConfirmation] = useState<TransferConfirmation | null>(null);
   const [confirmationError, setConfirmationError] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatError, setChatError] = useState("");
+  const [chatMessages, setChatMessages] = useState<AiChatMessage[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      content: "Ask me to prepare a transfer, like 'Send 25 dNZD to Mum'. I'll draft it for review before anything is sent.",
+    },
+  ]);
+  const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const [automation, setAutomation] = useState<AutomationSettings>(DEFAULT_AUTOMATION_SETTINGS);
   const [savedRecipients, setSavedRecipients] = useState<SavedRecipient[]>([]);
   const [automationBusy, setAutomationBusy] = useState(false);
@@ -344,6 +371,16 @@ export default function Home() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [user?.walletAddress]);
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      const container = chatMessagesRef.current;
+      if (!container) return;
+      container.scrollTop = container.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [chatOpen, chatMessages, chatBusy]);
 
   useEffect(() => {
     if (authMode !== "register") return;
@@ -549,28 +586,35 @@ export default function Home() {
     }
   }
 
-  async function saveAutomationSettings(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function persistAutomationSettings(nextAutomation: AutomationSettings, successMessage: string) {
     setAutomationBusy(true);
     setAutomationError("");
     setAutomationStatus("");
     try {
       const data = await api<AutomationOverview>("/api/automation", {
-        aiEnabled: automation.aiEnabled,
-        autopayEnabled: automation.autopayEnabled,
-        maxSingleAmountNzd: automation.maxSingleAmountNzd,
-        dailyLimitAmountNzd: automation.dailyLimitAmountNzd,
-        autoApproveAmountNzd: automation.autoApproveAmountNzd,
-        recipientScope: automation.recipientScope,
-        allowedChannels: automation.allowedChannels,
+        aiEnabled: nextAutomation.aiEnabled,
+        autopayEnabled: nextAutomation.autopayEnabled,
+        maxSingleAmountNzd: nextAutomation.maxSingleAmountNzd,
+        dailyLimitAmountNzd: nextAutomation.dailyLimitAmountNzd,
+        autoApproveAmountNzd: nextAutomation.autoApproveAmountNzd,
+        recipientScope: nextAutomation.recipientScope,
+        allowedChannels: nextAutomation.allowedChannels,
       });
       applyAutomationOverview(data);
-      setAutomationStatus("Automation guardrails updated.");
+      setAutomationStatus(successMessage);
+      return true;
     } catch (err) {
       setAutomationError(err instanceof Error ? err.message : "Could not update automation settings");
+      await loadAutomation();
+      return false;
     } finally {
       setAutomationBusy(false);
     }
+  }
+
+  async function saveAutomationSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await persistAutomationSettings(automation, "Automation guardrails updated.");
   }
 
   async function saveRecipient(identifier: string, nickname = "") {
@@ -707,6 +751,77 @@ export default function Home() {
     setConfirmationError("");
   }
 
+  async function submitAiChat(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const prompt = chatInput.trim();
+    if (!prompt || chatBusy) return;
+
+    const nextMessages: AiChatMessage[] = [
+      ...chatMessages,
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: prompt,
+      },
+    ];
+
+    setChatMessages(nextMessages);
+    setChatInput("");
+    setChatBusy(true);
+    setChatError("");
+
+    try {
+      const response = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: nextMessages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+          activeWalletAddress: activePaymentWallet,
+        }),
+      });
+      const text = await response.text();
+      const data = text ? JSON.parse(text) as {
+        message?: string;
+        error?: string;
+        transferProposal?: AiTransferProposal | null;
+      } : {};
+      if (!response.ok) {
+        throw new Error(data.error || "Could not reach PocketRail AI.");
+      }
+
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: data.message || "I prepared a response.",
+          transferProposal: data.transferProposal || null,
+        },
+      ]);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Could not reach PocketRail AI.");
+    } finally {
+      setChatBusy(false);
+    }
+  }
+
+  async function reviewAiTransfer(proposal: AiTransferProposal) {
+    try {
+      await requestTransferConfirmation({
+        source: "ai",
+        recipient: proposal.recipientInput,
+        amountNzd: proposal.amountNzd,
+        walletAddress: proposal.fromWalletAddress,
+      });
+      setChatOpen(false);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Could not prepare AI transfer.");
+    }
+  }
+
   async function sendTransfer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSendError("");
@@ -834,6 +949,17 @@ export default function Home() {
     setContactEditMode(false);
     setWalletEditMode(false);
     setTransferConfirmation(null);
+    setChatOpen(false);
+    setChatBusy(false);
+    setChatInput("");
+    setChatError("");
+    setChatMessages([
+      {
+        id: "welcome",
+        role: "assistant",
+          content: "Ask me to prepare a transfer, like 'Send 25 dNZD to Mum'. I'll draft it for review before anything is sent.",
+      },
+    ]);
     setAutomation(DEFAULT_AUTOMATION_SETTINGS);
     setSavedRecipients([]);
     setAutomationError("");
@@ -1523,9 +1649,15 @@ export default function Home() {
                       type="button"
                       className={automation.aiEnabled ? "toggle-button active" : "toggle-button"}
                       aria-pressed={automation.aiEnabled}
-                      onClick={() =>
-                        setAutomation((current) => ({ ...current, aiEnabled: !current.aiEnabled }))
-                      }
+                      onClick={() => {
+                        const nextAutomation = { ...automation, aiEnabled: !automation.aiEnabled };
+                        setAutomation(nextAutomation);
+                        void persistAutomationSettings(
+                          nextAutomation,
+                          nextAutomation.aiEnabled ? "AI access enabled." : "AI access disabled.",
+                        );
+                      }}
+                      disabled={automationBusy}
                     >
                       <span className="toggle-knob" />
                     </button>
@@ -1542,9 +1674,15 @@ export default function Home() {
                           type="button"
                           className={automation.autopayEnabled ? "toggle-button active" : "toggle-button"}
                           aria-pressed={automation.autopayEnabled}
-                          onClick={() =>
-                            setAutomation((current) => ({ ...current, autopayEnabled: !current.autopayEnabled }))
-                          }
+                          onClick={() => {
+                            const nextAutomation = { ...automation, autopayEnabled: !automation.autopayEnabled };
+                            setAutomation(nextAutomation);
+                            void persistAutomationSettings(
+                              nextAutomation,
+                              nextAutomation.autopayEnabled ? "Autopay enabled." : "Autopay disabled.",
+                            );
+                          }}
+                          disabled={automationBusy}
                         >
                           <span className="toggle-knob" />
                         </button>
@@ -1733,6 +1871,85 @@ export default function Home() {
           </section>
         </div>
       </section>
+
+      <div className="ai-chat-shell">
+        {chatOpen && (
+          <section className="ai-chat-panel surface-panel" aria-label="PocketRail AI assistant">
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">PocketRail AI</p>
+                <h3>Transfer assistant</h3>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setChatOpen(false)}
+                aria-label="Close AI chat"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="ai-chat-messages" ref={chatMessagesRef}>
+              {chatMessages.map((message) => (
+                <article
+                  key={message.id}
+                  className={message.role === "assistant" ? "ai-chat-message assistant" : "ai-chat-message user"}
+                >
+                  <p>{message.content}</p>
+                  {message.transferProposal && (
+                    <div className="ai-transfer-card">
+                      <strong>Transfer ready for review</strong>
+                      <small>
+                        {formatCurrency(Number(message.transferProposal.amountNzd), "NZD", "NZ")} to @
+                        {message.transferProposal.prepared.recipient.username}
+                      </small>
+                      <small>{shortAddress(message.transferProposal.fromWalletAddress)} paying wallet</small>
+                      <small>Confirmation is still required before wallet signing.</small>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => void reviewAiTransfer(message.transferProposal as AiTransferProposal)}
+                      >
+                        <BadgeCheck size={15} /> Review transfer
+                      </button>
+                    </div>
+                  )}
+                </article>
+              ))}
+              {chatBusy && (
+                <div className="ai-chat-message assistant">
+                  <p>Thinking through your transfer request...</p>
+                </div>
+              )}
+            </div>
+
+            {chatError && <p className="error">{chatError}</p>}
+
+            <form className="ai-chat-composer" onSubmit={submitAiChat}>
+              <input
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder="Send 25 dNZD to Mum"
+                disabled={chatBusy}
+              />
+              <button type="submit" className="primary" disabled={chatBusy || !chatInput.trim()}>
+                {chatBusy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+                Ask AI
+              </button>
+            </form>
+          </section>
+        )}
+
+        <button
+          type="button"
+          className="ai-chat-trigger primary"
+          onClick={() => setChatOpen((current) => !current)}
+          aria-label="Open PocketRail AI assistant"
+        >
+          <MessageCircle size={18} />
+        </button>
+      </div>
 
       {transferConfirmation && (
         <div className="confirmation-overlay" role="presentation">
