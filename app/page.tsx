@@ -62,6 +62,16 @@ type FiatAccount = {
   }>;
 };
 
+type DisplayCurrency = "NZD" | "USD" | "AUD" | "EUR" | "GBP";
+
+const displayCurrencies: Array<{ code: DisplayCurrency; label: string; usdRate: number; locale: string }> = [
+  { code: "NZD", label: "New Zealand dollar", usdRate: 1.68, locale: "en-NZ" },
+  { code: "USD", label: "US dollar", usdRate: 1, locale: "en-US" },
+  { code: "AUD", label: "Australian dollar", usdRate: 1.54, locale: "en-AU" },
+  { code: "EUR", label: "Euro", usdRate: 0.92, locale: "de-DE" },
+  { code: "GBP", label: "British pound", usdRate: 0.79, locale: "en-GB" },
+];
+
 type PreparedTransfer = {
   chainId: number;
   token: {
@@ -100,6 +110,7 @@ export default function Home() {
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [bankAmount, setBankAmount] = useState("50");
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("NZD");
   const [exportPassword, setExportPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
@@ -263,7 +274,7 @@ export default function Home() {
       const data = await api<{ fiat: FiatAccount }>("/api/fiat");
       setFiat(data.fiat);
     } catch (err) {
-      setDataError(err instanceof Error ? err.message : "Could not load USD account");
+      setDataError(err instanceof Error ? err.message : "Could not load account");
     }
   }
 
@@ -274,12 +285,16 @@ export default function Home() {
     try {
       const data = await api<{ fiat: FiatAccount }>(
         kind === "top-up" ? "/api/fiat/top-up" : "/api/fiat/withdraw",
-        { amountUsd: bankAmount },
+        { amountUsd: displayToUsd(bankAmount, displayCurrency) },
       );
       setFiat(data.fiat);
-      setDataStatus(kind === "top-up" ? "Test USD added." : "Test USD withdrawn.");
+      setDataStatus(
+        kind === "top-up"
+          ? `Added ${formatCurrency(Number(bankAmount), displayCurrency)} test value to the app ledger.`
+          : `Withdrew ${formatCurrency(Number(bankAmount), displayCurrency)} test value from the app ledger.`,
+      );
     } catch (err) {
-      setDataError(err instanceof Error ? err.message : "Could not update USD balance");
+      setDataError(err instanceof Error ? err.message : "Could not update balance");
     } finally {
       setBusy(false);
     }
@@ -312,7 +327,8 @@ export default function Home() {
     setSendStatus("");
     setSendLink("");
     try {
-      if (bankBalanceUsd < Number(amount)) {
+      const amountUsd = displayToUsd(amount, displayCurrency);
+      if (bankBalanceUsd < Number(amountUsd)) {
         throw new Error("Insufficient balance. Add money first.");
       }
       const data =
@@ -320,10 +336,10 @@ export default function Home() {
           ? await sendFromLinkedWallet()
           : await api<{ fiat: FiatAccount; txHash: string; recipient: { name: string; username: string } }>("/api/app/send", {
               recipient,
-              amountUsd: amount,
+              amountUsd,
             });
       setFiat(data.fiat);
-      setSendStatus(`Sent ${formatUsd(Number(amount))} test USDC on Sepolia to @${data.recipient.username}.`);
+      setSendStatus(`Sent ${formatCurrency(Number(amount), displayCurrency)} to @${data.recipient.username}.`);
       setSendLink(`https://sepolia.etherscan.io/tx/${data.txHash}`);
       setAmount("");
       setRecipient("");
@@ -345,7 +361,7 @@ export default function Home() {
 
     const prepared = await api<PreparedTransfer>("/api/app/prepare-send", {
       recipient,
-      amountUsd: amount,
+      amountUsd: displayToUsd(amount, displayCurrency),
     });
 
     await switchToSepolia();
@@ -358,7 +374,7 @@ export default function Home() {
 
     const signer = await provider.getSigner();
     const usdc = new Contract(prepared.token.address, erc20BalanceAbi, signer);
-    const amountRaw = parseUnits(amount, prepared.token.decimals);
+    const amountRaw = parseUnits(displayToUsd(amount, displayCurrency), prepared.token.decimals);
     const usdcBalance = (await usdc.balanceOf(selected)) as bigint;
     const proofAsset = usdcBalance >= amountRaw ? "USDC" : "ETH";
     if (proofAsset === "ETH") {
@@ -379,7 +395,7 @@ export default function Home() {
 
     return api<{ fiat: FiatAccount; txHash: string; recipient: { name: string; username: string } }>("/api/app/record-send", {
       recipient,
-      amountUsd: amount,
+      amountUsd: displayToUsd(amount, displayCurrency),
       txHash: receipt.hash,
       proofAsset,
     });
@@ -428,6 +444,8 @@ export default function Home() {
   }
 
   const bankBalanceUsd = Number(fiat?.balanceUsd || "0");
+  const selectedCurrency = currencyConfig(displayCurrency);
+  const displayedBalance = bankBalanceUsd * selectedCurrency.usdRate;
 
   if (loadingUser) {
     return <main className="center-screen"><Loader2 className="spin" /> Loading wallet...</main>;
@@ -559,14 +577,27 @@ export default function Home() {
       <section className="money-panel">
         <div className="money-hero">
           <span className="eyebrow">Bank balance</span>
-          <h2>{formatUsd(bankBalanceUsd)}</h2>
-          <p>Your app balance is backed by hidden USDC movement between PocketRail wallets on Sepolia.</p>
+          <h2>{formatCurrency(displayedBalance, displayCurrency)}</h2>
+          <p>Your app balance is stored as test USD/USDC and shown in your selected currency.</p>
         </div>
         <div className="money-control">
           <label>
-            USD amount
+            Display currency
+            <select value={displayCurrency} onChange={(event) => setDisplayCurrency(event.target.value as DisplayCurrency)}>
+              {displayCurrencies.map((currency) => (
+                <option value={currency.code} key={currency.code}>
+                  {currency.code} - {currency.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {displayCurrency} amount
             <input value={bankAmount} onChange={(event) => setBankAmount(event.target.value)} inputMode="decimal" placeholder="50.00" />
           </label>
+          <p className="muted-copy compact-copy">
+            Add test money updates the PocketRail demo ledger only. It does not mint USDC or send funds to a blockchain wallet.
+          </p>
           <div className="money-actions">
             <button className="primary" onClick={() => updateTestBalance("top-up")} disabled={busy}>
               <Check size={17} /> Add test money
@@ -592,7 +623,7 @@ export default function Home() {
               <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="@username or wallet address" required />
             </label>
             <label>
-              USD amount
+              {displayCurrency} amount
               <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
             </label>
             {sendError && <p className="error">{sendError}</p>}
@@ -734,9 +765,24 @@ function timeAgo(timestamp: string) {
 }
 
 function formatUsd(value: number) {
-  return value.toLocaleString("en-US", {
+  return formatCurrency(value, "USD");
+}
+
+function formatCurrency(value: number, currency: DisplayCurrency) {
+  const config = currencyConfig(currency);
+  return value.toLocaleString(config.locale, {
     style: "currency",
-    currency: "USD",
+    currency,
     maximumFractionDigits: 2,
   });
+}
+
+function displayToUsd(value: string, currency: DisplayCurrency) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return value;
+  return (parsed / currencyConfig(currency).usdRate).toFixed(2);
+}
+
+function currencyConfig(currency: DisplayCurrency) {
+  return displayCurrencies.find((item) => item.code === currency) || displayCurrencies[0];
 }

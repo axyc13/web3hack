@@ -466,6 +466,12 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   gap: 10px;
   margin: 0;
 }
+.compact-copy {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.compact-copy { margin: -4px 0 0; }
 .quote-grid {
   display: grid;
   gap: 10px;
