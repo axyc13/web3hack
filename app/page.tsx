@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { REGION_OPTIONS } from "@/lib/currency";
 import {
   ArrowRight,
+  ArrowUpRight,
+  BadgeCheck,
   Eye,
   EyeOff,
   ExternalLink,
@@ -86,6 +88,8 @@ type FxState = {
   preferredCurrency: string;
 };
 
+type DashboardView = "overview" | "pay" | "activity" | "profile";
+
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const BASE_SEPOLIA_CHAIN_HEX = "0x14a34";
 const BASE_SEPOLIA_RPC_URL = "https://sepolia.base.org";
@@ -93,6 +97,12 @@ const BASE_SEPOLIA_EXPLORER = "https://sepolia.basescan.org/tx/";
 const erc20BalanceAbi = [
   "function balanceOf(address owner) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
+];
+const DASHBOARD_VIEWS: { id: DashboardView; label: string; hint: string }[] = [
+  { id: "overview", label: "Overview", hint: "Balance and shortcuts" },
+  { id: "pay", label: "Pay", hint: "Send dNZD" },
+  { id: "activity", label: "Activity", hint: "Transactions and settlement" },
+  { id: "profile", label: "Profile", hint: "Account and region" },
 ];
 
 export default function Home() {
@@ -112,6 +122,9 @@ export default function Home() {
   const [sendError, setSendError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [activeView, setActiveView] = useState<DashboardView>("overview");
+  const [availableWallets, setAvailableWallets] = useState<string[]>([]);
+  const [selectedWalletAddress, setSelectedWalletAddress] = useState("");
   const [form, setForm] = useState({
     name: "",
     username: "",
@@ -144,8 +157,38 @@ export default function Home() {
 
   useEffect(() => {
     if (!user) return;
+    void loadBrowserWallets();
+
+    const ethereum = window.ethereum;
+    if (!ethereum?.on) return;
+
+    const onAccountsChanged = (accounts: string[]) => {
+      const nextWallets = uniqueAddresses(accounts);
+      setAvailableWallets(nextWallets);
+      setSelectedWalletAddress((current) => {
+        if (current && nextWallets.some((address) => address.toLowerCase() === current.toLowerCase())) {
+          return current;
+        }
+        return nextWallets[0] || current;
+      });
+    };
+
+    ethereum.on("accountsChanged", onAccountsChanged);
+    return () => {
+      ethereum.removeListener?.("accountsChanged", onAccountsChanged);
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
     void loadFx(user.regionCode);
   }, [user?.regionCode]);
+
+  useEffect(() => {
+    if (!selectedWalletAddress && walletOptions.length > 0) {
+      setSelectedWalletAddress(walletOptions[0]);
+    }
+  }, [selectedWalletAddress, user?.linkedWalletAddress, user?.walletAddress, availableWallets]);
 
   useEffect(() => {
     if (!user?.walletAddress) return;
@@ -255,6 +298,7 @@ export default function Home() {
         payload,
       );
       setUser(data.user);
+      setActiveView("overview");
       setAuthStatus(authMode === "login" ? "Welcome back." : "Account created.");
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Authentication failed");
@@ -283,6 +327,7 @@ export default function Home() {
     try {
       const data = await api<{ transactions: WalletTransaction[] }>("/api/wallet/transactions");
       setTransactions(data.transactions);
+      setDataError("");
     } catch (err) {
       setDataError(err instanceof Error ? err.message : "Could not load transactions");
     }
@@ -292,6 +337,7 @@ export default function Home() {
     try {
       const data = await api<{ balances: WalletBalanceGroup[] }>("/api/wallet/balances");
       setBalanceGroups(data.balances);
+      setDataError("");
     } catch (err) {
       setDataError(err instanceof Error ? err.message : "Could not load wallet balances");
     }
@@ -306,6 +352,25 @@ export default function Home() {
       });
     } catch {
       setFx({ rate: 1, preferredCurrency: "NZD" });
+    }
+  }
+
+  async function loadBrowserWallets(prompt = false) {
+    try {
+      if (!window.ethereum?.request) {
+        setAvailableWallets([]);
+        return;
+      }
+      const accounts = (await window.ethereum.request({
+        method: prompt ? "eth_requestAccounts" : "eth_accounts",
+      })) as string[];
+      const nextWallets = uniqueAddresses(accounts);
+      setAvailableWallets(nextWallets);
+      setSelectedWalletAddress((current) => current || nextWallets[0] || current);
+    } catch (err) {
+      if (prompt) {
+        setSendError(err instanceof Error ? err.message : "Could not connect wallet");
+      }
     }
   }
 
@@ -339,12 +404,13 @@ export default function Home() {
         throw new Error("Insufficient dNZD balance.");
       }
 
-      const data = await sendFromLinkedWallet();
+      const data = await sendFromSelectedWallet(activePaymentWallet);
 
       setSendStatus(`Sent ${formatCurrency(amountValue, "NZD", "NZ")} to @${data.recipient.username}.`);
       setSendLink(`${BASE_SEPOLIA_EXPLORER}${data.txHash}`);
       setAmount("");
       setRecipient("");
+      setActiveView("activity");
       await Promise.all([loadTransactions(), loadBalances()]);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : "Could not send money");
@@ -353,9 +419,9 @@ export default function Home() {
     }
   }
 
-  async function sendFromLinkedWallet() {
-    if (!user?.linkedWalletAddress) {
-      throw new Error("Connect the wallet linked to this account first.");
+  async function sendFromSelectedWallet(walletAddress: string) {
+    if (!walletAddress) {
+      throw new Error("Select a wallet to pay from first.");
     }
     if (!window.ethereum?.request) {
       throw new Error("No browser wallet found. Open this app in a wallet browser or install MetaMask.");
@@ -369,12 +435,12 @@ export default function Home() {
     await switchToBaseSepolia();
     const provider = new BrowserProvider(window.ethereum);
     const accounts = (await provider.send("eth_requestAccounts", [])) as string[];
-    const selected = accounts[0];
-    if (!selected || selected.toLowerCase() !== user.linkedWalletAddress.toLowerCase()) {
-      throw new Error(`Switch your browser wallet to the linked wallet ${shortAddress(user.linkedWalletAddress)}.`);
+    const selected = accounts.find((account) => account.toLowerCase() === walletAddress.toLowerCase());
+    if (!selected) {
+      throw new Error(`Connect or switch to ${shortAddress(walletAddress)} in your browser wallet first.`);
     }
 
-    const signer = await provider.getSigner();
+    const signer = await provider.getSigner(selected);
     const token = new Contract(prepared.token.address, erc20BalanceAbi, signer);
     const amountRaw = parseUnits(amount, prepared.token.decimals);
     const tokenBalance = (await token.balanceOf(selected)) as bigint;
@@ -431,6 +497,7 @@ export default function Home() {
     setAuthError("");
     setSendError("");
     setDataError("");
+    setActiveView("overview");
   }
 
   const baseSepoliaAssets = balanceGroups.find((group) => group.chain.id === BASE_SEPOLIA_CHAIN_ID)?.assets || [];
@@ -442,30 +509,92 @@ export default function Home() {
   const displayCurrency = user?.preferredCurrency || fx.preferredCurrency;
   const displayRegion = REGION_OPTIONS.find((option) => option.code === userRegionCode) || REGION_OPTIONS[0];
   const bankBalanceDisplay = bankBalanceNzd * (fx.rate || 1);
+  const walletOptions = uniqueAddresses([
+    user?.linkedWalletAddress || "",
+    user?.walletAddress || "",
+    ...availableWallets,
+  ]);
+  const activePaymentWallet = selectedWalletAddress || walletOptions[0] || "";
   const sendAmountValue = Number(amount);
   const convertedSendAmount = Number.isFinite(sendAmountValue) ? sendAmountValue * (fx.rate || 1) : 0;
+  const activityCountLabel = transactions.length === 1 ? "1 transaction" : `${transactions.length} transactions`;
+  const latestTransaction = transactions[0];
 
   if (loadingUser) {
-    return <main className="center-screen"><Loader2 className="spin" /> Loading wallet...</main>;
+    return (
+      <main className="center-screen app-background">
+        <div className="loading-orb">
+          <Loader2 className="spin" />
+        </div>
+        <span>Loading PocketRail...</span>
+      </main>
+    );
   }
 
   if (!user) {
     return (
-      <main className="auth-page">
-        <section className="brand-panel">
-          <div className="brand-mark"><Wallet size={30} /></div>
-          <h1>PocketRail</h1>
-          <p>A wallet-connected dNZD account on Base Sepolia for paying other PocketRail users from your linked wallet.</p>
-          <div className="proof-row">
-            <span><ShieldCheck size={16} /> SQLite user records</span>
-            <span><ShieldCheck size={16} /> Base Sepolia dNZD payments</span>
+      <main className="auth-shell app-background">
+        <section className="auth-showcase surface-panel">
+          <div className="hero-badge">
+            <Wallet size={16} />
+            PocketRail on Base Sepolia
+          </div>
+          <div className="hero-copy">
+            <p className="eyebrow soft">Wallet-connected payments</p>
+            <h1>Send stablecoin transfers through an app that feels familiar.</h1>
+            <p className="lead-copy">
+              PocketRail gives your crypto payment flow a cleaner bank-like front end, while settlement still happens onchain in dNZD.
+            </p>
+          </div>
+          <div className="feature-grid">
+            <article className="feature-card">
+              <span className="feature-icon">
+                <ShieldCheck size={16} />
+              </span>
+              <strong>Safer onboarding</strong>
+              <p>Email login, username checks, and wallet linking all live in one flow.</p>
+            </article>
+            <article className="feature-card">
+              <span className="feature-icon">
+                <ArrowUpRight size={16} />
+              </span>
+              <strong>Fast handoff to chain</strong>
+              <p>Users see familiar balances, then transactions settle through Base Sepolia.</p>
+            </article>
+            <article className="feature-card">
+              <span className="feature-icon">
+                <BadgeCheck size={16} />
+              </span>
+              <strong>Built for repeat use</strong>
+              <p>Profile, activity, and send flow stay connected in a single experience.</p>
+            </article>
+          </div>
+          <div className="showcase-metrics">
+            <div>
+              <strong>dNZD</strong>
+              <span>Settlement asset</span>
+            </div>
+            <div>
+              <strong>Base</strong>
+              <span>Sepolia testnet</span>
+            </div>
+            <div>
+              <strong>Live FX</strong>
+              <span>Localized display</span>
+            </div>
           </div>
         </section>
 
-        <section className="auth-panel">
-          <div className="segmented">
-            <button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Register</button>
-            <button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Log in</button>
+        <section className="auth-card surface-panel">
+          <div className="auth-card-head">
+            <div>
+              <p className="eyebrow">Access PocketRail</p>
+              <h2>{authMode === "register" ? "Create your account" : "Welcome back"}</h2>
+            </div>
+            <div className="segmented">
+              <button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Register</button>
+              <button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Log in</button>
+            </div>
           </div>
 
           <form onSubmit={submitAuth} className="stack">
@@ -478,7 +607,7 @@ export default function Home() {
             {authMode === "register" && (
               <label>
                 Username
-              <input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="ada" required minLength={3} />
+                <input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="ada" required minLength={3} />
                 {usernameState.message && (
                   <span className={usernameState.available ? "field-hint success-text" : "field-hint error-text"}>
                     {usernameState.message}
@@ -493,7 +622,14 @@ export default function Home() {
             <label>
               Password
               <div className="password-field">
-                <input type={showPassword ? "text" : "password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="At least 8 characters" required minLength={authMode === "register" ? 8 : 1} />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder="At least 8 characters"
+                  required
+                  minLength={authMode === "register" ? 8 : 1}
+                />
                 <button type="button" onClick={() => setShowPassword((value) => !value)} aria-label="Toggle password visibility">
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -546,130 +682,324 @@ export default function Home() {
   }
 
   return (
-    <main className="dashboard">
-      <header className="topbar">
-        <div>
-          <span className="eyebrow">PocketRail</span>
-          <h1>Welcome, {user.name}</h1>
-        </div>
-        <button className="icon-button" onClick={logout} aria-label="Log out"><LogOut size={19} /></button>
-      </header>
-
-      <section className="money-panel">
-        <div className="money-hero">
-          <span className="eyebrow">Bank balance</span>
-          <h2>{formatCurrency(bankBalanceDisplay, displayCurrency, user.regionCode)}</h2>
-          <p>Your live dNZD balance shown in {displayRegion.label} currency.</p>
-        </div>
-        <div className="money-control">
-          <div className="profile-box">
-            <strong>Base Sepolia wallet</strong>
-            <small>dNZD available: {shortAmount(dnzdAsset?.balance || "0")} dNZD</small>
-            <small>ETH for gas: {shortAmount(gasBalanceEth)} ETH</small>
-            <small>Display region: {displayRegion.label} ({displayCurrency})</small>
-            <small>Linked wallet {shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</small>
+    <main className="app-shell app-background">
+      <section className="sidebar-shell surface-panel">
+        <div className="sidebar-brand">
+          <div className="brand-emblem">
+            <Wallet size={18} />
           </div>
-          <p className="muted-copy compact-copy">
-            Transfers still settle in dNZD. We only convert the on-screen display into the user&apos;s selected region currency.
-          </p>
-          {dataError && <p className="error">{dataError}</p>}
-        </div>
-      </section>
-
-      <section className="dashboard-grid bottom-grid">
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Send money</h2>
-            <Send size={19} />
+          <div>
+            <p className="eyebrow">PocketRail</p>
+            <h1>Payments</h1>
           </div>
-          <form className="stack" onSubmit={sendTransfer}>
-            <label>
-              Recipient
-              <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="@username or wallet address" required />
-            </label>
-            <label>
-              dNZD amount
-              <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
-            </label>
-            <p className="muted-copy compact-copy">
-              {Number.isFinite(sendAmountValue) && sendAmountValue > 0
-                ? `Shown to you as ${formatCurrency(convertedSendAmount, displayCurrency, user.regionCode)} in ${displayRegion.label}.`
-                : `Transfers settle in dNZD, while your dashboard displays ${displayCurrency}.`}
-            </p>
-            {sendError && <p className="error">{sendError}</p>}
-            {sendStatus && <p className="success">{sendStatus}</p>}
-            {sendLink && (
-              <a className="inline-link" href={sendLink} target="_blank" rel="noreferrer">
-                View Base Sepolia transaction <ExternalLink size={14} />
-              </a>
-            )}
-            <button className="primary" disabled={busy}>
-              {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-              Send dNZD
+        </div>
+
+        <div className="profile-identity">
+          <div className="identity-avatar">{user.name.slice(0, 1).toUpperCase()}</div>
+          <div>
+            <strong>{user.name}</strong>
+            <span>@{user.username}</span>
+          </div>
+        </div>
+
+        <nav className="nav-stack" aria-label="Dashboard views">
+          {DASHBOARD_VIEWS.map((view) => (
+            <button
+              key={view.id}
+              type="button"
+              className={activeView === view.id ? "nav-pill active" : "nav-pill"}
+              onClick={() => setActiveView(view.id)}
+            >
+              <span>{view.label}</span>
+              <small>{view.hint}</small>
             </button>
-          </form>
-        </section>
+          ))}
+        </nav>
 
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Profile</h2>
-          </div>
-          <div className="profile-box">
-            <strong>@{user.username}</strong>
-            <span>{user.name}</span>
-            <small>{user.email}</small>
-            <label>
-              Region
-              <select
-                value={user.regionCode}
-                onChange={(event) => void updateRegion(event.target.value)}
-                disabled={profileBusy}
-              >
-                {REGION_OPTIONS.map((option) => (
-                  <option key={option.code} value={option.code}>
-                    {option.label} ({option.currency})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <small>Display currency: {displayCurrency}</small>
-            <small>Linked wallet {shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</small>
-            {profileError && <p className="error">{profileError}</p>}
-            {profileStatus && <p className="success">{profileStatus}</p>}
-          </div>
-        </section>
+        <button className="secondary logout-button" onClick={logout}>
+          <LogOut size={16} /> Log out
+        </button>
       </section>
 
-      <section className="dashboard-grid bottom-grid">
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Transactions</h2>
-            <button className="icon-button" onClick={() => { void loadTransactions(); void loadBalances(); }} aria-label="Refresh transactions">
+      <section className="content-shell">
+        <header className="app-topbar surface-panel">
+          <div>
+            <p className="eyebrow">Dashboard</p>
+            <h2>{dashboardTitle(activeView, user.name)}</h2>
+          </div>
+          <div className="topbar-actions">
+            <button className="secondary" type="button" onClick={() => setActiveView("pay")}>
+              <Send size={16} /> New payment
+            </button>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => {
+                void loadTransactions();
+                void loadBalances();
+              }}
+              aria-label="Refresh dashboard"
+            >
               <History size={17} />
             </button>
           </div>
-          <div className="tx-list">
-            {transactions.length === 0 && (
-              <p className="muted-copy">No incoming or outgoing transactions found yet.</p>
-            )}
-            {transactions.map((tx) => (
-              <a className="tx-row" href={tx.explorerUrl || "#"} target="_blank" rel="noreferrer" key={`${tx.chainId}-${tx.hash}`}>
-                <span className={`direction ${tx.direction}`}>{tx.direction}</span>
-                <span>
-                  <strong>{shortAmount(tx.amount)} {tx.symbol}</strong>
-                  <small>{tx.chainName} · {tx.method || "transfer"} · {tx.status}</small>
-                </span>
-                <span className="tx-meta">
-                  <small>{timeAgo(tx.timestamp)}</small>
-                  <ExternalLink size={15} />
-                </span>
-              </a>
-            ))}
-          </div>
-        </section>
+        </header>
+
+        <div className="view-stage">
+          <section className={activeView === "overview" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "overview"}>
+            <div className="hero-balance surface-panel">
+              <div className="hero-balance-copy">
+                <p className="eyebrow soft">Available balance</p>
+                <h3>{formatCurrency(bankBalanceDisplay, displayCurrency, user.regionCode)}</h3>
+                <p>
+                  Your on-screen balance is localized for {displayRegion.label}, while settlement still happens in dNZD.
+                </p>
+                <div className="hero-actions">
+                  <button className="primary" type="button" onClick={() => setActiveView("pay")}>
+                    <Send size={16} /> Send dNZD
+                  </button>
+                  {latestTransaction?.explorerUrl && (
+                    <a className="secondary" href={latestTransaction.explorerUrl} target="_blank" rel="noreferrer">
+                      Latest transaction <ExternalLink size={15} />
+                    </a>
+                  )}
+                </div>
+              </div>
+              <div className="hero-balance-side">
+                <div className="stat-card">
+                  <span>Wallet balance</span>
+                  <strong>{shortAmount(dnzdAsset?.balance || "0")} dNZD</strong>
+                </div>
+                <div className="stat-card">
+                  <span>Network gas</span>
+                  <strong>{shortAmount(gasBalanceEth)} ETH</strong>
+                </div>
+                <div className="stat-card">
+                  <span>Activity</span>
+                  <strong>{activityCountLabel}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="overview-grid">
+              <article className="surface-panel info-card">
+                <div className="panel-head">
+                  <h3>Quick pay</h3>
+                  <Send size={18} />
+                </div>
+                <p className="muted-copy">Choose a wallet, enter a recipient, and send a payment in a few steps.</p>
+                <div className="action-list">
+                  <button className="secondary" type="button" onClick={() => setActiveView("pay")}>
+                    Open send flow
+                  </button>
+                  <button className="secondary" type="button" onClick={() => setActiveView("activity")}>
+                    Review activity
+                  </button>
+                </div>
+              </article>
+
+              <article className="surface-panel info-card">
+                <div className="panel-head">
+                  <h3>Profile snapshot</h3>
+                  <BadgeCheck size={18} />
+                </div>
+                <div className="profile-summary">
+                  <strong>@{user.username}</strong>
+                  <span>{user.email}</span>
+                  <small>Display region: {displayRegion.label} ({displayCurrency})</small>
+                </div>
+              </article>
+            </div>
+
+            {dataError && <p className="error floating-message">{dataError}</p>}
+          </section>
+
+          <section className={activeView === "pay" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "pay"}>
+            <div className="dashboard-grid modern-grid">
+              <section className="surface-panel panel">
+                <div className="panel-head">
+                  <div>
+                    <p className="eyebrow">Send money</p>
+                    <h3>Pay another PocketRail user</h3>
+                  </div>
+                  <Send size={20} />
+                </div>
+                <form className="stack" onSubmit={sendTransfer}>
+                  <label>
+                    Pay from
+                    <select
+                      value={activePaymentWallet}
+                      onChange={(event) => setSelectedWalletAddress(event.target.value)}
+                      disabled={walletOptions.length === 0}
+                    >
+                      {walletOptions.length === 0 ? (
+                        <option value="">Connect a browser wallet</option>
+                      ) : (
+                        walletOptions.map((wallet) => (
+                          <option key={wallet} value={wallet}>
+                            {walletLabel(wallet, user)}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+                  <label>
+                    Recipient
+                    <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="@username or wallet address" required />
+                  </label>
+                  <label>
+                    dNZD amount
+                    <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
+                  </label>
+                  <p className="muted-copy compact-copy">
+                    {Number.isFinite(sendAmountValue) && sendAmountValue > 0
+                      ? `Displayed to you as ${formatCurrency(convertedSendAmount, displayCurrency, user.regionCode)} in ${displayRegion.label}.`
+                      : `Transfers settle in dNZD while your dashboard displays ${displayCurrency}.`}
+                  </p>
+                  {sendError && <p className="error">{sendError}</p>}
+                  {sendStatus && <p className="success">{sendStatus}</p>}
+                  {sendLink && (
+                    <a className="inline-link" href={sendLink} target="_blank" rel="noreferrer">
+                      View Base Sepolia transaction <ExternalLink size={14} />
+                    </a>
+                  )}
+                  <button className="primary" disabled={busy}>
+                    {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+                    Send dNZD
+                  </button>
+                </form>
+              </section>
+
+              <aside className="surface-panel panel side-panel">
+                <div className="panel-head">
+                  <h3>Payment wallet</h3>
+                  <Wallet size={18} />
+                </div>
+                <div className="profile-box">
+                  <strong>{shortAddress(activePaymentWallet)}</strong>
+                  <small>Selected wallet</small>
+                </div>
+                <div className="action-list">
+                  <button className="secondary" type="button" onClick={() => void loadBrowserWallets(true)}>
+                    <Wallet size={16} /> Connect browser wallet
+                  </button>
+                </div>
+                <div className="sidebar-card soft-card">
+                  <span className="eyebrow soft">Available balance</span>
+                  <strong>{shortAmount(dnzdAsset?.balance || "0")} dNZD</strong>
+                  <small>{shortAmount(gasBalanceEth)} ETH for gas</small>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section className={activeView === "activity" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "activity"}>
+            <section className="surface-panel panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">Activity</p>
+                  <h3>Transaction history</h3>
+                </div>
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={() => {
+                    void loadTransactions();
+                    void loadBalances();
+                  }}
+                  aria-label="Refresh transactions"
+                >
+                  <History size={17} />
+                </button>
+              </div>
+              {dataError && <p className="error inline-message">{dataError}</p>}
+              <div className="tx-list">
+                {transactions.length === 0 && (
+                  <p className="muted-copy empty-state">No incoming or outgoing transactions found yet.</p>
+                )}
+                {transactions.map((tx) => (
+                  <a className="tx-row" href={tx.explorerUrl || "#"} target="_blank" rel="noreferrer" key={`${tx.chainId}-${tx.hash}`}>
+                    <span className={`direction ${tx.direction}`}>{tx.direction}</span>
+                    <span>
+                      <strong>{shortAmount(tx.amount)} {tx.symbol}</strong>
+                      <small>{tx.chainName} · {tx.method || "transfer"} · {tx.status}</small>
+                    </span>
+                    <span className="tx-meta">
+                      <small>{timeAgo(tx.timestamp)}</small>
+                      <ExternalLink size={15} />
+                    </span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          </section>
+
+          <section className={activeView === "profile" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "profile"}>
+            <div className="dashboard-grid modern-grid">
+              <section className="surface-panel panel">
+                <div className="panel-head">
+                  <div>
+                    <p className="eyebrow">Profile</p>
+                    <h3>Account details</h3>
+                  </div>
+                  <BadgeCheck size={18} />
+                </div>
+                <div className="profile-box profile-panel">
+                  <strong>@{user.username}</strong>
+                  <span>{user.name}</span>
+                  <small>{user.email}</small>
+                  <label>
+                    Region
+                    <select
+                      value={user.regionCode}
+                      onChange={(event) => void updateRegion(event.target.value)}
+                      disabled={profileBusy}
+                    >
+                      {REGION_OPTIONS.map((option) => (
+                        <option key={option.code} value={option.code}>
+                          {option.label} ({option.currency})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <small>Display currency: {displayCurrency}</small>
+                  <small>Linked wallet {shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</small>
+                  {profileError && <p className="error">{profileError}</p>}
+                  {profileStatus && <p className="success">{profileStatus}</p>}
+                </div>
+              </section>
+
+              <aside className="surface-panel panel side-panel">
+                <div className="panel-head">
+                  <h3>Wallet details</h3>
+                  <Wallet size={18} />
+                </div>
+                <div className="profile-box">
+                  <strong>{shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</strong>
+                  <small>Linked wallet</small>
+                  <small>{shortAmount(gasBalanceEth)} ETH available for gas</small>
+                  <small>{shortAmount(dnzdAsset?.balance || "0")} dNZD balance</small>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </div>
       </section>
     </main>
   );
+}
+
+function dashboardTitle(view: DashboardView, name: string) {
+  switch (view) {
+    case "pay":
+      return "Send a payment";
+    case "activity":
+      return "Recent activity";
+    case "profile":
+      return "Manage your account";
+    default:
+      return `Welcome back, ${name}`;
+  }
 }
 
 function shortAddress(address: string) {
@@ -705,4 +1035,32 @@ function formatCurrency(value: number, currency: string, regionCode: string) {
     currency,
     maximumFractionDigits: 2,
   });
+}
+
+function walletLabel(walletAddress: string, user: User) {
+  const labels: string[] = [shortAddress(walletAddress)];
+
+  if (user.linkedWalletAddress && walletAddress.toLowerCase() === user.linkedWalletAddress.toLowerCase()) {
+    labels.push("Linked");
+  }
+  if (user.walletAddress && walletAddress.toLowerCase() === user.walletAddress.toLowerCase()) {
+    labels.push("Account");
+  }
+
+  return labels.join(" · ");
+}
+
+function uniqueAddresses(addresses: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const address of addresses) {
+    if (!address) continue;
+    const normalized = address.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(address);
+  }
+
+  return result;
 }
