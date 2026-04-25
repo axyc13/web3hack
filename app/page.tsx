@@ -7,6 +7,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   BadgeCheck,
+  Bot,
   Eye,
   EyeOff,
   ExternalLink,
@@ -15,6 +16,8 @@ import {
   LogOut,
   Send,
   ShieldCheck,
+  Trash2,
+  UserPlus,
   Wallet,
 } from "lucide-react";
 
@@ -88,6 +91,36 @@ type FxState = {
   preferredCurrency: string;
 };
 
+type RecipientScope = "saved_only" | "any_registered";
+
+type AutomationSettings = {
+  aiEnabled: boolean;
+  autopayEnabled: boolean;
+  maxSingleAmountNzd: string;
+  dailyLimitAmountNzd: string;
+  autoApproveAmountNzd: string;
+  recipientScope: RecipientScope;
+  allowedChannels: string[];
+  dailyUsedAmountNzd: string;
+  dailyRemainingAmountNzd: string;
+};
+
+type SavedRecipient = {
+  id: number;
+  recipientUserId: number;
+  name: string;
+  username: string;
+  walletAddress: string | null;
+  nickname: string | null;
+  createdAt: string;
+};
+
+type AutomationOverview = {
+  settings: AutomationSettings;
+  recipients: SavedRecipient[];
+  agentBrief: string;
+};
+
 type DashboardView = "overview" | "pay" | "activity" | "profile";
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
@@ -104,6 +137,17 @@ const DASHBOARD_VIEWS: { id: DashboardView; label: string; hint: string }[] = [
   { id: "activity", label: "Activity", hint: "Transactions and settlement" },
   { id: "profile", label: "Profile", hint: "Account and region" },
 ];
+const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
+  aiEnabled: false,
+  autopayEnabled: false,
+  maxSingleAmountNzd: "100.00",
+  dailyLimitAmountNzd: "500.00",
+  autoApproveAmountNzd: "25.00",
+  recipientScope: "saved_only",
+  allowedChannels: ["dashboard"],
+  dailyUsedAmountNzd: "0.00",
+  dailyRemainingAmountNzd: "500.00",
+};
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -136,6 +180,13 @@ export default function Home() {
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
   const [profileError, setProfileError] = useState("");
+  const [automation, setAutomation] = useState<AutomationSettings>(DEFAULT_AUTOMATION_SETTINGS);
+  const [savedRecipients, setSavedRecipients] = useState<SavedRecipient[]>([]);
+  const [automationBusy, setAutomationBusy] = useState(false);
+  const [automationError, setAutomationError] = useState("");
+  const [automationStatus, setAutomationStatus] = useState("");
+  const [savedRecipientDraft, setSavedRecipientDraft] = useState("");
+  const [savedRecipientNickname, setSavedRecipientNickname] = useState("");
   const [usernameState, setUsernameState] = useState<{
     checking: boolean;
     available: boolean;
@@ -183,6 +234,15 @@ export default function Home() {
     if (!user) return;
     void loadFx(user.regionCode);
   }, [user?.regionCode]);
+
+  useEffect(() => {
+    if (!user) {
+      setAutomation(DEFAULT_AUTOMATION_SETTINGS);
+      setSavedRecipients([]);
+      return;
+    }
+    void loadAutomation();
+  }, [user?.id]);
 
   useEffect(() => {
     if (!selectedWalletAddress && walletOptions.length > 0) {
@@ -389,6 +449,105 @@ export default function Home() {
     }
   }
 
+  function applyAutomationOverview(data: AutomationOverview) {
+    setAutomation(data.settings);
+    setSavedRecipients(data.recipients);
+  }
+
+  async function loadAutomation() {
+    try {
+      const data = await api<AutomationOverview>("/api/automation");
+      applyAutomationOverview(data);
+      setAutomationError("");
+    } catch (err) {
+      setAutomationError(err instanceof Error ? err.message : "Could not load automation settings");
+    }
+  }
+
+  async function saveAutomationSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAutomationBusy(true);
+    setAutomationError("");
+    setAutomationStatus("");
+    try {
+      const data = await api<AutomationOverview>("/api/automation", {
+        aiEnabled: automation.aiEnabled,
+        autopayEnabled: automation.autopayEnabled,
+        maxSingleAmountNzd: automation.maxSingleAmountNzd,
+        dailyLimitAmountNzd: automation.dailyLimitAmountNzd,
+        autoApproveAmountNzd: automation.autoApproveAmountNzd,
+        recipientScope: automation.recipientScope,
+        allowedChannels: automation.allowedChannels,
+      });
+      applyAutomationOverview(data);
+      setAutomationStatus("Automation guardrails updated.");
+    } catch (err) {
+      setAutomationError(err instanceof Error ? err.message : "Could not update automation settings");
+    } finally {
+      setAutomationBusy(false);
+    }
+  }
+
+  async function saveRecipientFromProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await saveRecipient(savedRecipientDraft, savedRecipientNickname);
+  }
+
+  async function saveRecipient(identifier: string, nickname = "") {
+    const trimmedIdentifier = identifier.trim();
+    if (!trimmedIdentifier) {
+      setAutomationError("Enter a username or wallet address to save a recipient.");
+      return;
+    }
+    setAutomationBusy(true);
+    setAutomationError("");
+    setAutomationStatus("");
+    try {
+      const data = await api<AutomationOverview>("/api/automation/recipients", {
+        recipient: trimmedIdentifier,
+        nickname: nickname.trim() || undefined,
+      });
+      applyAutomationOverview(data);
+      setSavedRecipientDraft("");
+      setSavedRecipientNickname("");
+      setAutomationStatus("Recipient saved for future transfers and automation.");
+    } catch (err) {
+      setAutomationError(err instanceof Error ? err.message : "Could not save recipient");
+    } finally {
+      setAutomationBusy(false);
+    }
+  }
+
+  async function removeRecipient(savedRecipientId: number) {
+    setAutomationBusy(true);
+    setAutomationError("");
+    setAutomationStatus("");
+    try {
+      const res = await fetch("/api/automation/recipients", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ savedRecipientId }),
+      });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) as AutomationOverview & { error?: string } : undefined;
+      if (!res.ok) {
+        throw new Error(data?.error || "Could not remove recipient");
+      }
+      if (data) {
+        applyAutomationOverview(data);
+      }
+      setAutomationStatus("Recipient removed from your saved list.");
+    } catch (err) {
+      setAutomationError(err instanceof Error ? err.message : "Could not remove recipient");
+    } finally {
+      setAutomationBusy(false);
+    }
+  }
+
+  async function saveCurrentRecipient() {
+    await saveRecipient(recipient);
+  }
+
   async function sendTransfer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSendError("");
@@ -497,6 +656,10 @@ export default function Home() {
     setAuthError("");
     setSendError("");
     setDataError("");
+    setAutomation(DEFAULT_AUTOMATION_SETTINGS);
+    setSavedRecipients([]);
+    setAutomationError("");
+    setAutomationStatus("");
     setActiveView("overview");
   }
 
@@ -519,6 +682,11 @@ export default function Home() {
   const convertedSendAmount = Number.isFinite(sendAmountValue) ? sendAmountValue * (fx.rate || 1) : 0;
   const activityCountLabel = transactions.length === 1 ? "1 transaction" : `${transactions.length} transactions`;
   const latestTransaction = transactions[0];
+  const automationStateLabel = !automation.aiEnabled
+    ? "Automation off"
+    : automation.autopayEnabled
+      ? "Autopay armed"
+      : "AI assist only";
 
   if (loadingUser) {
     return (
@@ -684,41 +852,45 @@ export default function Home() {
   return (
     <main className="app-shell app-background">
       <section className="sidebar-shell surface-panel">
-        <div className="sidebar-brand">
-          <div className="brand-emblem">
-            <Wallet size={18} />
+        <div className="sidebar-main">
+          <div className="sidebar-brand">
+            <div className="brand-emblem">
+              <Wallet size={18} />
+            </div>
+            <div>
+              <p className="eyebrow">PocketRail</p>
+              <h1>Payments</h1>
+            </div>
           </div>
-          <div>
-            <p className="eyebrow">PocketRail</p>
-            <h1>Payments</h1>
-          </div>
+
+          <nav className="nav-stack" aria-label="Dashboard views">
+            {DASHBOARD_VIEWS.map((view) => (
+              <button
+                key={view.id}
+                type="button"
+                className={activeView === view.id ? "nav-pill active" : "nav-pill"}
+                onClick={() => setActiveView(view.id)}
+              >
+                <span>{view.label}</span>
+              </button>
+            ))}
+          </nav>
         </div>
 
-        <div className="profile-identity">
-          <div className="identity-avatar">{user.name.slice(0, 1).toUpperCase()}</div>
-          <div>
-            <strong>{user.name}</strong>
-            <span>@{user.username}</span>
+        <div className="sidebar-footer">
+          <div className="profile-identity">
+            <div className="identity-avatar">{user.name.slice(0, 1).toUpperCase()}</div>
+            <div>
+              <strong>{user.name}</strong>
+              <span>@{user.username}</span>
+              <small>{user.email}</small>
+            </div>
           </div>
+
+          <button className="secondary logout-button" onClick={logout}>
+            <LogOut size={16} /> Log out
+          </button>
         </div>
-
-        <nav className="nav-stack" aria-label="Dashboard views">
-          {DASHBOARD_VIEWS.map((view) => (
-            <button
-              key={view.id}
-              type="button"
-              className={activeView === view.id ? "nav-pill active" : "nav-pill"}
-              onClick={() => setActiveView(view.id)}
-            >
-              <span>{view.label}</span>
-              <small>{view.hint}</small>
-            </button>
-          ))}
-        </nav>
-
-        <button className="secondary logout-button" onClick={logout}>
-          <LogOut size={16} /> Log out
-        </button>
       </section>
 
       <section className="content-shell">
@@ -809,6 +981,20 @@ export default function Home() {
                   <small>Display region: {displayRegion.label} ({displayCurrency})</small>
                 </div>
               </article>
+
+              <article className="surface-panel info-card">
+                <div className="panel-head">
+                  <h3>Automation</h3>
+                  <Bot size={18} />
+                </div>
+                <div className="profile-summary">
+                  <strong>{automationStateLabel}</strong>
+                  <span>{savedRecipients.length} saved recipients</span>
+                  <small>
+                    {automation.dailyRemainingAmountNzd} dNZD remaining in the current automation budget.
+                  </small>
+                </div>
+              </article>
             </div>
 
             {dataError && <p className="error floating-message">{dataError}</p>}
@@ -825,6 +1011,23 @@ export default function Home() {
                   <Send size={20} />
                 </div>
                 <form className="stack" onSubmit={sendTransfer}>
+                  {savedRecipients.length > 0 && (
+                    <div className="stack compact-stack">
+                      <span className="section-label">Saved recipients</span>
+                      <div className="recipient-chip-list">
+                        {savedRecipients.map((savedRecipient) => (
+                          <button
+                            key={savedRecipient.id}
+                            type="button"
+                            className={recipient === `@${savedRecipient.username}` ? "choice active" : "choice"}
+                            onClick={() => setRecipient(`@${savedRecipient.username}`)}
+                          >
+                            {recipientDisplayName(savedRecipient)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <label>
                     Pay from
                     <select
@@ -847,6 +1050,19 @@ export default function Home() {
                     Recipient
                     <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="@username or wallet address" required />
                   </label>
+                  <div className="action-list inline-actions">
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => void saveCurrentRecipient()}
+                      disabled={automationBusy || !recipient.trim()}
+                    >
+                      <UserPlus size={16} /> Save recipient
+                    </button>
+                    <small className="muted-copy">
+                      Saved contacts become reusable shortcuts and your default AI allowlist.
+                    </small>
+                  </div>
                   <label>
                     dNZD amount
                     <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
@@ -888,6 +1104,12 @@ export default function Home() {
                   <span className="eyebrow soft">Available balance</span>
                   <strong>{shortAmount(dnzdAsset?.balance || "0")} dNZD</strong>
                   <small>{shortAmount(gasBalanceEth)} ETH for gas</small>
+                </div>
+                <div className="sidebar-card soft-card">
+                  <span className="eyebrow soft">AI controls</span>
+                  <strong>{automationStateLabel}</strong>
+                  <small>Auto-approve under {automation.autoApproveAmountNzd} dNZD</small>
+                  <small>{automation.dailyRemainingAmountNzd} dNZD daily budget remaining</small>
                 </div>
               </aside>
             </div>
@@ -935,7 +1157,7 @@ export default function Home() {
           </section>
 
           <section className={activeView === "profile" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "profile"}>
-            <div className="dashboard-grid modern-grid">
+            <div className="profile-layout">
               <section className="surface-panel panel">
                 <div className="panel-head">
                   <div>
@@ -967,20 +1189,215 @@ export default function Home() {
                   {profileError && <p className="error">{profileError}</p>}
                   {profileStatus && <p className="success">{profileStatus}</p>}
                 </div>
-              </section>
 
-              <aside className="surface-panel panel side-panel">
-                <div className="panel-head">
-                  <h3>Wallet details</h3>
-                  <Wallet size={18} />
+                <div className="settings-divider" />
+
+                <div className="panel-head nested-head">
+                  <div>
+                    <p className="eyebrow">Automation</p>
+                    <h3>AI guardrails</h3>
+                  </div>
+                  <ShieldCheck size={18} />
                 </div>
-                <div className="profile-box">
-                  <strong>{shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</strong>
-                  <small>Linked wallet</small>
-                  <small>{shortAmount(gasBalanceEth)} ETH available for gas</small>
-                  <small>{shortAmount(dnzdAsset?.balance || "0")} dNZD balance</small>
+
+                <form className="stack" onSubmit={saveAutomationSettings}>
+                  <label className="toggle-row">
+                    <div>
+                      <strong>Enable AI access</strong>
+                      <small>Allow an agent to read your guardrails and prepare transaction requests.</small>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={automation.aiEnabled}
+                      onChange={(event) =>
+                        setAutomation((current) => ({ ...current, aiEnabled: event.target.checked }))
+                      }
+                    />
+                  </label>
+
+                  {automation.aiEnabled ? (
+                    <div className="stack">
+                      <label className="toggle-row">
+                        <div>
+                          <strong>Enable autopay</strong>
+                          <small>Let approved requests move ahead without manual review when they stay under your limit.</small>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={automation.autopayEnabled}
+                          onChange={(event) =>
+                            setAutomation((current) => ({ ...current, autopayEnabled: event.target.checked }))
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        Recipient policy
+                        <select
+                          value={automation.recipientScope}
+                          onChange={(event) =>
+                            setAutomation((current) => ({
+                              ...current,
+                              recipientScope: event.target.value as RecipientScope,
+                            }))
+                          }
+                          disabled={automationBusy}
+                        >
+                          <option value="saved_only">Only saved recipients</option>
+                          <option value="any_registered">Any PocketRail user</option>
+                        </select>
+                      </label>
+
+                      <div className="settings-grid">
+                        <label>
+                          Single transfer limit
+                          <input
+                            value={automation.maxSingleAmountNzd}
+                            onChange={(event) =>
+                              setAutomation((current) => ({
+                                ...current,
+                                maxSingleAmountNzd: event.target.value,
+                              }))
+                            }
+                            inputMode="decimal"
+                            placeholder="100.00"
+                          />
+                        </label>
+                        <label>
+                          Daily limit
+                          <input
+                            value={automation.dailyLimitAmountNzd}
+                            onChange={(event) =>
+                              setAutomation((current) => ({
+                                ...current,
+                                dailyLimitAmountNzd: event.target.value,
+                              }))
+                            }
+                            inputMode="decimal"
+                            placeholder="500.00"
+                          />
+                        </label>
+                        <label>
+                          Auto-approve under
+                          <input
+                            value={automation.autoApproveAmountNzd}
+                            onChange={(event) =>
+                              setAutomation((current) => ({
+                                ...current,
+                                autoApproveAmountNzd: event.target.value,
+                              }))
+                            }
+                            inputMode="decimal"
+                            placeholder="25.00"
+                          />
+                        </label>
+                      </div>
+
+                      <label>
+                        Approved channels
+                        <input
+                          value={automation.allowedChannels.join(", ")}
+                          onChange={(event) =>
+                            setAutomation((current) => ({
+                              ...current,
+                              allowedChannels: event.target.value.split(","),
+                            }))
+                          }
+                          placeholder="dashboard, slack, whatsapp"
+                        />
+                      </label>
+
+                      <div className="profile-box compact-box">
+                        <strong>{automationStateLabel}</strong>
+                        <small>{automation.dailyUsedAmountNzd} dNZD already used in the last 24 hours</small>
+                        <small>{automation.dailyRemainingAmountNzd} dNZD remaining before the daily cap</small>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="collapsed-helper">
+                      <p className="muted-copy">
+                        Turn AI access on to reveal transaction limits, approved channels, and autopay controls.
+                      </p>
+                    </div>
+                  )}
+
+                  {automationError && <p className="error">{automationError}</p>}
+                  {automationStatus && <p className="success">{automationStatus}</p>}
+
+                  <button className="primary" disabled={automationBusy}>
+                    {automationBusy ? <Loader2 className="spin" size={18} /> : <ShieldCheck size={18} />}
+                    Save automation settings
+                  </button>
+                </form>
+
+                <div className="settings-divider" />
+
+                <div className="panel-head nested-head">
+                  <div>
+                    <p className="eyebrow">Recipients</p>
+                    <h3>Saved contacts</h3>
+                  </div>
+                  <UserPlus size={18} />
                 </div>
-              </aside>
+
+                <form className="stack compact-stack" onSubmit={saveRecipientFromProfile}>
+                  <label>
+                    PocketRail user
+                    <input
+                      value={savedRecipientDraft}
+                      onChange={(event) => setSavedRecipientDraft(event.target.value)}
+                      placeholder="@username or wallet address"
+                    />
+                  </label>
+                  <label>
+                    Nickname
+                    <input
+                      value={savedRecipientNickname}
+                      onChange={(event) => setSavedRecipientNickname(event.target.value)}
+                      placeholder="Mum, supplier, Auckland ops"
+                    />
+                  </label>
+                  <button className="secondary strong" type="submit" disabled={automationBusy}>
+                    <UserPlus size={16} /> Save recipient
+                  </button>
+                </form>
+
+                <div className="recipient-list">
+                  {savedRecipients.length === 0 ? (
+                    <p className="muted-copy empty-state">No saved recipients yet. Add trusted contacts here for repeat payments and AI automation.</p>
+                  ) : (
+                    savedRecipients.map((savedRecipient) => (
+                      <div className="recipient-card" key={savedRecipient.id}>
+                        <div>
+                          <strong>{recipientDisplayName(savedRecipient)}</strong>
+                          <small>@{savedRecipient.username}</small>
+                          <small>{shortAddress(savedRecipient.walletAddress || "")}</small>
+                        </div>
+                        <div className="recipient-actions">
+                          <button
+                            className="secondary"
+                            type="button"
+                            onClick={() => {
+                              setRecipient(`@${savedRecipient.username}`);
+                              setActiveView("pay");
+                            }}
+                          >
+                            <Send size={15} /> Use
+                          </button>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            onClick={() => void removeRecipient(savedRecipient.id)}
+                            aria-label={`Remove ${recipientDisplayName(savedRecipient)}`}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
             </div>
           </section>
         </div>
@@ -1048,6 +1465,10 @@ function walletLabel(walletAddress: string, user: User) {
   }
 
   return labels.join(" · ");
+}
+
+function recipientDisplayName(recipient: SavedRecipient) {
+  return recipient.nickname || recipient.name;
 }
 
 function uniqueAddresses(addresses: string[]) {
