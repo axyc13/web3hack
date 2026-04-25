@@ -2,12 +2,19 @@
 
 import { BrowserProvider, Contract, parseUnits } from "ethers";
 import { useEffect, useState } from "react";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+} from "recharts";
 import { REGION_OPTIONS } from "@/lib/currency";
 import {
   ArrowRight,
   ArrowUpRight,
   BadgeCheck,
-  Bot,
   Eye,
   EyeOff,
   ExternalLink,
@@ -119,6 +126,13 @@ type AutomationOverview = {
   settings: AutomationSettings;
   recipients: SavedRecipient[];
   agentBrief: string;
+};
+
+type BalanceTimelinePoint = {
+  id: string;
+  label: string;
+  detail: string;
+  balance: number;
 };
 
 type DashboardView = "overview" | "pay" | "activity" | "profile";
@@ -680,13 +694,14 @@ export default function Home() {
   const activePaymentWallet = selectedWalletAddress || walletOptions[0] || "";
   const sendAmountValue = Number(amount);
   const convertedSendAmount = Number.isFinite(sendAmountValue) ? sendAmountValue * (fx.rate || 1) : 0;
-  const activityCountLabel = transactions.length === 1 ? "1 transaction" : `${transactions.length} transactions`;
   const latestTransaction = transactions[0];
   const automationStateLabel = !automation.aiEnabled
     ? "Automation off"
     : automation.autopayEnabled
       ? "Autopay armed"
       : "AI assist only";
+  const balanceTimeline = buildBalanceTimeline(transactions, bankBalanceDisplay, fx.rate || 1);
+  const activeBalancePoint = balanceTimeline[balanceTimeline.length - 1];
 
   if (loadingUser) {
     return (
@@ -921,8 +936,14 @@ export default function Home() {
           <section className={activeView === "overview" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "overview"}>
             <div className="hero-balance surface-panel">
               <div className="hero-balance-copy">
-                <p className="eyebrow soft">Available balance</p>
-                <h3>{formatCurrency(bankBalanceDisplay, displayCurrency, user.regionCode)}</h3>
+                <div className="hero-balance-head">
+                  <p className="eyebrow soft">Available balance</p>
+                  <h3>Welcome back, {user.name}</h3>
+                </div>
+                <div className="balance-line">
+                  <strong>{formatCurrency(bankBalanceDisplay, displayCurrency, user.regionCode)}</strong>
+                  <span>{displayCurrency}</span>
+                </div>
                 <p>
                   Your on-screen balance is localized for {displayRegion.label}, while settlement still happens in dNZD.
                 </p>
@@ -936,65 +957,68 @@ export default function Home() {
                     </a>
                   )}
                 </div>
-              </div>
-              <div className="hero-balance-side">
-                <div className="stat-card">
-                  <span>Wallet balance</span>
-                  <strong>{shortAmount(dnzdAsset?.balance || "0")} dNZD</strong>
-                </div>
-                <div className="stat-card">
-                  <span>Network gas</span>
-                  <strong>{shortAmount(gasBalanceEth)} ETH</strong>
-                </div>
-                <div className="stat-card">
-                  <span>Activity</span>
-                  <strong>{activityCountLabel}</strong>
+
+                <div className="hero-balance-footer">
+                  <div className="stat-card mini-stat">
+                    <span>Wallet balance</span>
+                    <strong>{shortAmount(dnzdAsset?.balance || "0")} dNZD</strong>
+                  </div>
+                  <div className="stat-card mini-stat">
+                    <span>Gas balance</span>
+                    <strong>{shortAmount(gasBalanceEth)} ETH</strong>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="overview-grid">
-              <article className="surface-panel info-card">
-                <div className="panel-head">
-                  <h3>Quick pay</h3>
-                  <Send size={18} />
+              <div className="balance-chart-card">
+                <div className="balance-chart-meta">
+                  <div>
+                    <span className="section-label">Balance over time</span>
+                    <strong>{formatCurrency(activeBalancePoint.balance, displayCurrency, user.regionCode)} {displayCurrency}</strong>
+                  </div>
                 </div>
-                <p className="muted-copy">Choose a wallet, enter a recipient, and send a payment in a few steps.</p>
-                <div className="action-list">
-                  <button className="secondary" type="button" onClick={() => setActiveView("pay")}>
-                    Open send flow
-                  </button>
-                  <button className="secondary" type="button" onClick={() => setActiveView("activity")}>
-                    Review activity
-                  </button>
-                </div>
-              </article>
 
-              <article className="surface-panel info-card">
-                <div className="panel-head">
-                  <h3>Profile snapshot</h3>
-                  <BadgeCheck size={18} />
+                <div className="balance-chart-frame" role="img" aria-label="Balance over time">
+                  <ResponsiveContainer width="100%" height={250}>
+                    <AreaChart data={balanceTimeline} margin={{ top: 12, right: 10, left: 0, bottom: 8 }}>
+                      <defs>
+                        <linearGradient id="balance-fill-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.28} />
+                          <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.04} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="rgba(148, 163, 184, 0.16)" strokeDasharray="4 6" vertical={false} />
+                      <XAxis
+                        dataKey="label"
+                        hide
+                        axisLine={false}
+                        tickLine={false}
+                        tickMargin={12}
+                      />
+                      <Tooltip
+                        cursor={{ stroke: "rgba(59, 130, 246, 0.22)", strokeWidth: 2 }}
+                        content={(props) => (
+                          <BalanceChartTooltip
+                            active={props.active}
+                            payload={props.payload as unknown as ReadonlyArray<{ payload: BalanceTimelinePoint }> | undefined}
+                            regionCode={user.regionCode}
+                            currency={displayCurrency}
+                          />
+                        )}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="balance"
+                        stroke="#3b82f6"
+                        strokeWidth={4}
+                        fill="url(#balance-fill-gradient)"
+                        activeDot={{ r: 7, fill: "#2dd4bf", stroke: "#ffffff", strokeWidth: 3 }}
+                        dot={{ r: 4, fill: "#ffffff", stroke: "#3b82f6", strokeWidth: 3 }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
-                <div className="profile-summary">
-                  <strong>@{user.username}</strong>
-                  <span>{user.email}</span>
-                  <small>Display region: {displayRegion.label} ({displayCurrency})</small>
-                </div>
-              </article>
-
-              <article className="surface-panel info-card">
-                <div className="panel-head">
-                  <h3>Automation</h3>
-                  <Bot size={18} />
-                </div>
-                <div className="profile-summary">
-                  <strong>{automationStateLabel}</strong>
-                  <span>{savedRecipients.length} saved recipients</span>
-                  <small>
-                    {automation.dailyRemainingAmountNzd} dNZD remaining in the current automation budget.
-                  </small>
-                </div>
-              </article>
+              </div>
             </div>
 
             {dataError && <p className="error floating-message">{dataError}</p>}
@@ -1415,7 +1439,7 @@ function dashboardTitle(view: DashboardView, name: string) {
     case "profile":
       return "Manage your account";
     default:
-      return `Welcome back, ${name}`;
+      return "Overview";
   }
 }
 
@@ -1469,6 +1493,114 @@ function walletLabel(walletAddress: string, user: User) {
 
 function recipientDisplayName(recipient: SavedRecipient) {
   return recipient.nickname || recipient.name;
+}
+
+function buildBalanceTimeline(
+  transactions: WalletTransaction[],
+  currentBalanceDisplay: number,
+  rate: number,
+) {
+  const now = Date.now();
+  const dnzdTransfers = [...transactions]
+    .filter((transaction) => transaction.symbol === "dNZD" && Number.isFinite(Number(transaction.amount)))
+    .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime());
+  const recentDnzTransfers = dnzdTransfers.slice(-8);
+
+  if (recentDnzTransfers.length === 0) {
+    const earlier = new Date(now - 1000 * 60 * 60 * 24).toISOString();
+    const nowIso = new Date(now).toISOString();
+    return [
+      {
+        id: `${earlier}-starting`,
+        label: formatTimelineAxis(earlier, now),
+        detail: formatTimelineDetail(earlier),
+        balance: currentBalanceDisplay,
+      },
+      {
+        id: "now",
+        label: "Now",
+        detail: formatTimelineDetail(nowIso),
+        balance: currentBalanceDisplay,
+      },
+    ] satisfies BalanceTimelinePoint[];
+  }
+
+  let runningBalance = currentBalanceDisplay;
+  const points: BalanceTimelinePoint[] = [
+    {
+      id: "now",
+      label: "Now",
+      detail: formatTimelineDetail(new Date(now).toISOString()),
+      balance: currentBalanceDisplay,
+    },
+  ];
+
+  for (let index = recentDnzTransfers.length - 1; index >= 0; index -= 1) {
+    const transaction = recentDnzTransfers[index];
+    const amount = Number(transaction.amount) * rate;
+    if (transaction.direction === "incoming") {
+      runningBalance -= amount;
+    } else if (transaction.direction === "outgoing") {
+      runningBalance += amount;
+    }
+    points.push({
+      id: `${transaction.chainId}-${transaction.hash}-history`,
+      label: formatTimelineAxis(transaction.timestamp, now),
+      detail: formatTimelineDetail(transaction.timestamp),
+      balance: runningBalance,
+    });
+  }
+
+  points.push({
+    id: `${recentDnzTransfers[0].hash}-starting`,
+    label: "Start",
+    detail: `Balance before ${formatTimelineDetail(recentDnzTransfers[0].timestamp)}`,
+    balance: runningBalance,
+  });
+
+  return points.reverse();
+}
+
+function formatTimelineAxis(timestamp: string, now = Date.now()) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return "Recent";
+  if (now - date.getTime() <= 1000 * 60 * 60 * 24) {
+    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatTimelineDetail(timestamp: string) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return "Recent";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function BalanceChartTooltip({
+  active,
+  payload,
+  regionCode,
+  currency,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<{ payload: BalanceTimelinePoint }>;
+  regionCode: string;
+  currency: string;
+}) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+
+  return (
+    <div className="balance-chart-tooltip">
+      <strong>{formatCurrency(point.balance, currency, regionCode)} {currency}</strong>
+      <span>{point.detail}</span>
+    </div>
+  );
 }
 
 function uniqueAddresses(addresses: string[]) {
