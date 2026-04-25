@@ -887,15 +887,46 @@ select:focus {
   justify-content: space-between;
 }
 
-.recipient-chip-list,
+.pay-top-grid,
+.recipient-entry,
 .settings-grid,
 .recipient-list {
   display: grid;
   gap: 12px;
 }
 
-.recipient-chip-list {
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+.pay-panel {
+  max-width: 980px;
+}
+
+.pay-top-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.9fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.payment-wallet-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.payment-wallet-head,
+.recipient-entry-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recipient-entry {
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .settings-grid {
@@ -1119,6 +1150,7 @@ select:focus {
   .overview-grid,
   .modern-grid,
   .hero-balance,
+  .pay-top-grid,
   .settings-grid {
     grid-template-columns: 1fr;
   }

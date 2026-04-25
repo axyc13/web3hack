@@ -695,6 +695,15 @@ export default function Home() {
   const sendAmountValue = Number(amount);
   const convertedSendAmount = Number.isFinite(sendAmountValue) ? sendAmountValue * (fx.rate || 1) : 0;
   const latestTransaction = transactions[0];
+  const selectedSavedRecipient = savedRecipients.find((savedRecipient) => {
+    const normalizedRecipient = recipient.trim().toLowerCase();
+    return (
+      normalizedRecipient === `@${savedRecipient.username}`.toLowerCase() ||
+      normalizedRecipient === savedRecipient.username.toLowerCase() ||
+      normalizedRecipient === (savedRecipient.walletAddress || "").toLowerCase()
+    );
+  });
+  const selectedSavedRecipientValue = selectedSavedRecipient ? String(selectedSavedRecipient.id) : "custom";
   const automationStateLabel = !automation.aiEnabled
     ? "Automation off"
     : automation.autopayEnabled
@@ -1025,33 +1034,16 @@ export default function Home() {
           </section>
 
           <section className={activeView === "pay" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "pay"}>
-            <div className="dashboard-grid modern-grid">
-              <section className="surface-panel panel">
-                <div className="panel-head">
-                  <div>
-                    <p className="eyebrow">Send money</p>
-                    <h3>Pay another PocketRail user</h3>
-                  </div>
-                  <Send size={20} />
+            <section className="surface-panel panel pay-panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">Send money</p>
+                  <h3>Pay another PocketRail user</h3>
                 </div>
-                <form className="stack" onSubmit={sendTransfer}>
-                  {savedRecipients.length > 0 && (
-                    <div className="stack compact-stack">
-                      <span className="section-label">Saved recipients</span>
-                      <div className="recipient-chip-list">
-                        {savedRecipients.map((savedRecipient) => (
-                          <button
-                            key={savedRecipient.id}
-                            type="button"
-                            className={recipient === `@${savedRecipient.username}` ? "choice active" : "choice"}
-                            onClick={() => setRecipient(`@${savedRecipient.username}`)}
-                          >
-                            {recipientDisplayName(savedRecipient)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                <Send size={20} />
+              </div>
+              <form className="stack" onSubmit={sendTransfer}>
+                <div className="pay-top-grid">
                   <label>
                     Pay from
                     <select
@@ -1070,10 +1062,68 @@ export default function Home() {
                       )}
                     </select>
                   </label>
+
+                  <div className="payment-wallet-card">
+                    <div className="payment-wallet-head">
+                      <span className="section-label">Payment wallet</span>
+                      <Wallet size={18} />
+                    </div>
+                    <div className="profile-box compact-box">
+                      <strong>{shortAddress(activePaymentWallet)}</strong>
+                      <small>Selected wallet</small>
+                      <small>{shortAmount(dnzdAsset?.balance || "0")} dNZD available</small>
+                      <small>{shortAmount(gasBalanceEth)} ETH gas balance</small>
+                    </div>
+                    <button className="secondary" type="button" onClick={() => void loadBrowserWallets(true)}>
+                      <Wallet size={16} /> Connect browser wallet
+                    </button>
+                  </div>
+                </div>
+
+                <div className="recipient-entry">
+                  <div className="recipient-entry-head">
+                    <div>
+                      <span className="section-label">Recipient</span>
+                      <p className="muted-copy compact-copy">Choose a saved contact or enter a new PocketRail recipient below.</p>
+                    </div>
+                  </div>
+
                   <label>
-                    Recipient
-                    <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="@username or wallet address" required />
+                    Saved recipients
+                    <select
+                      value={selectedSavedRecipientValue}
+                      onChange={(event) => {
+                        if (event.target.value === "custom") {
+                          setRecipient("");
+                          return;
+                        }
+                        const nextRecipient = savedRecipients.find(
+                          (savedRecipient) => String(savedRecipient.id) === event.target.value,
+                        );
+                        if (nextRecipient) {
+                          setRecipient(`@${nextRecipient.username}`);
+                        }
+                      }}
+                    >
+                      <option value="custom">Create a new recipient</option>
+                      {savedRecipients.map((savedRecipient) => (
+                        <option key={savedRecipient.id} value={savedRecipient.id}>
+                          {recipientDisplayName(savedRecipient)} (@{savedRecipient.username})
+                        </option>
+                      ))}
+                    </select>
                   </label>
+
+                  <label>
+                    Recipient name or Wallet address
+                    <input
+                      value={recipient}
+                      onChange={(e) => setRecipient(e.target.value)}
+                      placeholder="@username or wallet address"
+                      required
+                    />
+                  </label>
+
                   <div className="action-list inline-actions">
                     <button
                       className="secondary"
@@ -1083,60 +1133,31 @@ export default function Home() {
                     >
                       <UserPlus size={16} /> Save recipient
                     </button>
-                    <small className="muted-copy">
-                      Saved contacts become reusable shortcuts and your default AI allowlist.
-                    </small>
                   </div>
-                  <label>
-                    dNZD amount
-                    <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
-                  </label>
-                  <p className="muted-copy compact-copy">
-                    {Number.isFinite(sendAmountValue) && sendAmountValue > 0
-                      ? `Displayed to you as ${formatCurrency(convertedSendAmount, displayCurrency, user.regionCode)} in ${displayRegion.label}.`
-                      : `Transfers settle in dNZD while your dashboard displays ${displayCurrency}.`}
-                  </p>
-                  {sendError && <p className="error">{sendError}</p>}
-                  {sendStatus && <p className="success">{sendStatus}</p>}
-                  {sendLink && (
-                    <a className="inline-link" href={sendLink} target="_blank" rel="noreferrer">
-                      View Base Sepolia transaction <ExternalLink size={14} />
-                    </a>
-                  )}
-                  <button className="primary" disabled={busy}>
-                    {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-                    Send dNZD
-                  </button>
-                </form>
-              </section>
+                </div>
 
-              <aside className="surface-panel panel side-panel">
-                <div className="panel-head">
-                  <h3>Payment wallet</h3>
-                  <Wallet size={18} />
-                </div>
-                <div className="profile-box">
-                  <strong>{shortAddress(activePaymentWallet)}</strong>
-                  <small>Selected wallet</small>
-                </div>
-                <div className="action-list">
-                  <button className="secondary" type="button" onClick={() => void loadBrowserWallets(true)}>
-                    <Wallet size={16} /> Connect browser wallet
-                  </button>
-                </div>
-                <div className="sidebar-card soft-card">
-                  <span className="eyebrow soft">Available balance</span>
-                  <strong>{shortAmount(dnzdAsset?.balance || "0")} dNZD</strong>
-                  <small>{shortAmount(gasBalanceEth)} ETH for gas</small>
-                </div>
-                <div className="sidebar-card soft-card">
-                  <span className="eyebrow soft">AI controls</span>
-                  <strong>{automationStateLabel}</strong>
-                  <small>Auto-approve under {automation.autoApproveAmountNzd} dNZD</small>
-                  <small>{automation.dailyRemainingAmountNzd} dNZD daily budget remaining</small>
-                </div>
-              </aside>
-            </div>
+                <label>
+                  dNZD amount
+                  <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
+                </label>
+                <p className="muted-copy compact-copy">
+                  {Number.isFinite(sendAmountValue) && sendAmountValue > 0
+                    ? `Displayed to you as ${formatCurrency(convertedSendAmount, displayCurrency, user.regionCode)} in ${displayRegion.label}.`
+                    : `Transfers settle in dNZD while your dashboard displays ${displayCurrency}.`}
+                </p>
+                {sendError && <p className="error">{sendError}</p>}
+                {sendStatus && <p className="success">{sendStatus}</p>}
+                {sendLink && (
+                  <a className="inline-link" href={sendLink} target="_blank" rel="noreferrer">
+                    View Base Sepolia transaction <ExternalLink size={14} />
+                  </a>
+                )}
+                <button className="primary" disabled={busy}>
+                  {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+                  Send dNZD
+                </button>
+              </form>
+            </section>
           </section>
 
           <section className={activeView === "activity" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "activity"}>
