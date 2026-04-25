@@ -167,7 +167,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 }
 .wallet-choice p { margin: 0 0 12px; font-weight: 800; }
 .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.choice, .secondary, .primary, .icon-button, .copy-line {
+.choice, .secondary, .primary, .icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -227,7 +227,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   margin: 0 auto;
   padding: 32px 20px 56px;
 }
-.topbar, .summary-band, .panel-head, .asset {
+.topbar, .panel-head, .asset {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -242,7 +242,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   letter-spacing: 0;
   font-weight: 900;
 }
-.topbar h1, .summary-band h2, .panel h2 {
+.topbar h1, .panel h2 {
   margin: 4px 0 0;
   line-height: 1.1;
 }
@@ -255,37 +255,6 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   color: var(--ink);
 }
 
-.summary-band {
-  min-height: 190px;
-  padding: 34px;
-  margin-bottom: 20px;
-  color: white;
-  background:
-    linear-gradient(135deg, rgba(8, 47, 73, 0.94), rgba(30, 64, 175, 0.86)),
-    url("https://images.unsplash.com/photo-1621501103258-3e135c8c1fda?auto=format&fit=crop&w=1400&q=80") center/cover;
-  border-radius: 8px;
-}
-.summary-band .eyebrow { color: #bfdbfe; }
-.summary-band h2 { font-size: 40px; }
-.summary-sub {
-  margin: 10px 0 0;
-  color: rgba(255, 255, 255, 0.82);
-  font-weight: 800;
-}
-.copy-line {
-  margin-top: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.30);
-  background: rgba(255, 255, 255, 0.12);
-  color: white;
-  padding: 9px 12px;
-}
-.wallet-pill {
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  font-weight: 800;
-}
-
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
@@ -295,6 +264,47 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .panel { padding: 22px; }
 .wide { margin-top: 20px; }
 .bottom-grid { margin-top: 20px; }
+.money-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 22px;
+  align-items: stretch;
+  margin-top: 20px;
+  padding: 26px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.money-hero {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 190px;
+  padding: 28px;
+  color: white;
+  background:
+    linear-gradient(135deg, rgba(6, 95, 70, 0.92), rgba(30, 64, 175, 0.82)),
+    url("https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=1200&q=80") center/cover;
+  border-radius: 8px;
+}
+.money-hero .eyebrow { color: #d1fae5; }
+.money-hero h2 {
+  margin: 8px 0 10px;
+  font-size: 44px;
+  line-height: 1;
+}
+.money-hero p {
+  max-width: 520px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.86);
+  line-height: 1.5;
+}
+.money-control {
+  display: grid;
+  align-content: center;
+  gap: 14px;
+}
 .asset-list { display: grid; gap: 10px; margin-top: 16px; }
 .asset {
   width: 100%;
@@ -398,7 +408,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  margin: 16px 0;
+  margin: 0;
 }
 .quote-grid {
   display: grid;
@@ -425,16 +435,14 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 }
 
 @media (max-width: 900px) {
-  .auth-page, .dashboard-grid { grid-template-columns: 1fr; }
+  .auth-page, .dashboard-grid, .money-panel { grid-template-columns: 1fr; }
   .auth-page { padding: 18px; gap: 18px; }
   .brand-panel { min-height: 420px; padding: 28px; }
   .brand-panel h1 { font-size: 42px; }
-  .summary-band { align-items: flex-start; flex-direction: column; }
 }
 
 @media (max-width: 520px) {
   .choice-grid, .detail-grid { grid-template-columns: 1fr; }
-  .summary-band h2 { font-size: 30px; }
   .topbar h1 { font-size: 28px; }
   .tx-row { grid-template-columns: 1fr; }
   .tx-meta { justify-content: space-between; }

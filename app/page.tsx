@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BrowserProvider, Contract, ethers, formatUnits, isAddress, parseUnits } from "ethers";
+import { BrowserProvider, ethers, isAddress } from "ethers";
 import {
   ArrowRight,
   Check,
@@ -72,29 +72,18 @@ type CryptoQuote = {
   nzd: number;
 };
 
-const erc20Abi = ["function transfer(address to, uint256 amount) returns (bool)"];
-
-const clientChains: Record<number, {
-  chainId: string;
-  chainName: string;
-  nativeCurrency: { name: string; symbol: string; decimals: number };
-  rpcUrls: string[];
-  blockExplorerUrls: string[];
-}> = {
-  1: {
-    chainId: "0x1",
-    chainName: "Ethereum",
-    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://ethereum.publicnode.com"],
-    blockExplorerUrls: ["https://etherscan.io"],
-  },
-  11155111: {
-    chainId: "0xaa36a7",
-    chainName: "Sepolia",
-    nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: ["https://ethereum-sepolia.publicnode.com"],
-    blockExplorerUrls: ["https://sepolia.etherscan.io"],
-  },
+type FiatAccount = {
+  balanceCents: number;
+  balanceNzd: string;
+  events: Array<{
+    id: number;
+    kind: "top_up" | "withdrawal";
+    amountNzd: string;
+    status: string;
+    provider: string;
+    note: string | null;
+    createdAt: string;
+  }>;
 };
 
 declare global {
@@ -112,9 +101,12 @@ export default function Home() {
   const [balances, setBalances] = useState<BalanceGroup[]>([]);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [quotes, setQuotes] = useState<CryptoQuote[]>([]);
+  const [fiat, setFiat] = useState<FiatAccount | null>(null);
   const [selected, setSelected] = useState("");
+  const [sendAsset, setSendAsset] = useState("USDC");
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
+  const [bankAmount, setBankAmount] = useState("50");
   const [exportPassword, setExportPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
@@ -135,10 +127,6 @@ export default function Home() {
     [balances],
   );
 
-  const selectedAsset = flatAssets.find(
-    (asset) => `${asset.chainId}:${asset.symbol}` === selected,
-  );
-
   useEffect(() => {
     fetch("/api/auth/me")
       .then((res) => res.json())
@@ -151,6 +139,7 @@ export default function Home() {
       void loadBalances();
       void loadTransactions();
       void loadQuotes();
+      void loadFiat();
     }
   }, [user?.walletAddress]);
 
@@ -159,6 +148,12 @@ export default function Home() {
       setSelected(`${flatAssets[0].chainId}:${flatAssets[0].symbol}`);
     }
   }, [flatAssets, selected]);
+
+  useEffect(() => {
+    if (!quotes.some((quote) => quote.symbol === sendAsset) && quotes.length) {
+      setSendAsset(quotes.find((quote) => quote.symbol === "USDC")?.symbol || quotes[0].symbol);
+    }
+  }, [quotes, sendAsset]);
 
   async function api<T>(url: string, body?: unknown): Promise<T> {
     const res = await fetch(url, {
@@ -262,6 +257,33 @@ export default function Home() {
     }
   }
 
+  async function loadFiat() {
+    try {
+      const data = await api<{ fiat: FiatAccount }>("/api/fiat");
+      setFiat(data.fiat);
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : "Could not load NZD account");
+    }
+  }
+
+  async function updateTestBalance(kind: "top-up" | "withdraw") {
+    setDataError("");
+    setDataStatus("");
+    setBusy(true);
+    try {
+      const data = await api<{ fiat: FiatAccount }>(
+        kind === "top-up" ? "/api/fiat/top-up" : "/api/fiat/withdraw",
+        { amountNzd: bankAmount },
+      );
+      setFiat(data.fiat);
+      setDataStatus(kind === "top-up" ? "Test NZD added." : "Test NZD withdrawn.");
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : "Could not update NZD balance");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function exportPrivateKey(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -284,58 +306,27 @@ export default function Home() {
 
   async function sendTransfer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedAsset) return;
     setSendError("");
     setBusy(true);
     setSendStatus("");
     try {
+      const quote = quotes.find((item) => item.symbol === sendAsset);
+      if (!quote) throw new Error("Choose a supported crypto asset.");
+      if (bankBalanceNzd < Number(amount)) {
+        throw new Error("Insufficient NZD balance. Add test money first.");
+      }
       const recipientAddress = await resolveRecipient(recipient);
       if (!recipientAddress) {
         throw new Error("Recipient must be a valid wallet address or resolvable ENS name.");
       }
-      if (user?.walletKind === "external") {
-        if (!window.ethereum) throw new Error("Open your browser wallet to sign this transfer.");
-        await switchExternalWalletToChain(selectedAsset.chainId);
-        const provider = new BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        const current = await signer.getAddress();
-        if (current.toLowerCase() !== user.walletAddress?.toLowerCase()) {
-          throw new Error("Your connected browser wallet does not match this account.");
-        }
-
-        let txHash = "";
-        if (selectedAsset.native) {
-          const tx = await signer.sendTransaction({
-            to: recipientAddress,
-            value: parseUnits(amount, selectedAsset.decimals),
-          });
-          txHash = tx.hash;
-        } else {
-          const tokenAddress = tokenAddressFor(selectedAsset.chainId, selectedAsset.symbol);
-          const token = new Contract(tokenAddress, erc20Abi, signer);
-          const tx = await token.transfer(recipientAddress, parseUnits(amount, selectedAsset.decimals));
-          txHash = tx.hash;
-        }
-        await api("/api/wallet/send", {
-          chainId: selectedAsset.chainId,
-          symbol: selectedAsset.symbol,
-          recipient: recipientAddress,
-          amount,
-          clientTxHash: txHash,
-        });
-        setSendStatus(`Transfer submitted: ${txHash}`);
-      } else {
-        const data = await api<{ txHash: string }>("/api/wallet/send", {
-          chainId: selectedAsset.chainId,
-          symbol: selectedAsset.symbol,
-          recipient: recipientAddress,
-          amount,
-        });
-        setSendStatus(`Transfer submitted: ${data.txHash}`);
-      }
+      const data = await api<{ fiat: FiatAccount }>("/api/fiat/withdraw", {
+        amountNzd: amount,
+      });
+      setFiat(data.fiat);
+      const cryptoAmount = Number(amount) / quote.nzd;
+      setSendStatus(`Demo sent ${formatCrypto(cryptoAmount)} ${quote.symbol} to ${shortAddress(recipientAddress)}.`);
       setAmount("");
       setRecipient("");
-      await loadBalances();
       await loadTransactions();
     } catch (err) {
       setSendError(walletErrorMessage(err));
@@ -349,6 +340,7 @@ export default function Home() {
     setUser(null);
     setBalances([]);
     setTransactions([]);
+    setFiat(null);
     setPrivateKey("");
     setExportPassword("");
     setAuthStatus("");
@@ -370,47 +362,15 @@ export default function Home() {
     return data.address;
   }
 
-  function openTransak(kind: "buy" | "sell") {
-    setDataError("");
-    if (!user?.walletAddress) {
-      setDataError("Create or link a wallet before using card or bank rails.");
-      return;
-    }
-
-    const apiKey = process.env.NEXT_PUBLIC_TRANSAK_API_KEY;
-    if (!apiKey) {
-      setDataError("Add NEXT_PUBLIC_TRANSAK_API_KEY to .env to enable real card and bank flows.");
-      return;
-    }
-
-    const env = process.env.NEXT_PUBLIC_TRANSAK_ENV === "production" ? "production" : "staging";
-    const host = env === "production" ? "https://global.transak.com" : "https://global-stg.transak.com";
-    const params = new URLSearchParams({
-      apiKey,
-      walletAddress: user.walletAddress,
-      fiatCurrency: "NZD",
-      defaultFiatCurrency: "NZD",
-      cryptoCurrencyCode: "ETH",
-      defaultCryptoCurrency: "ETH",
-      network: "ethereum",
-      productsAvailed: kind === "buy" ? "BUY" : "SELL",
-    });
-
-    if (kind === "buy") {
-      params.set("paymentMethod", "credit_debit_card");
-    }
-
-    window.open(`${host}?${params.toString()}`, "_blank", "noopener,noreferrer");
-  }
-
-  const totalDisplay = flatAssets
-    .filter((asset) => Number(asset.balance) > 0)
-    .map((asset) => `${shortAmount(asset.balance)} ${asset.symbol}`)
-    .slice(0, 3)
-    .join(" + ");
-  const walletLabel = user?.ensName || shortAddress(user?.walletAddress || "");
-  const walletNzdEstimate = estimateWalletNzd(flatAssets, quotes);
-  const nzdReference = walletNzdEstimate > 0 ? walletNzdEstimate : 100;
+  const bankBalanceNzd = Number(fiat?.balanceNzd || "0");
+  const nzdReference = bankBalanceNzd > 0 ? bankBalanceNzd : 100;
+  const stableQuotes = quotes.filter((quote) =>
+    ["USDC", "USDT", "DAI", "PYUSD", "FDUSD", "TUSD", "BUSD", "ETH", "SOL", "BTC"].includes(quote.symbol),
+  );
+  const sendQuote = quotes.find((quote) => quote.symbol === sendAsset);
+  const sendPreview = sendQuote && Number(amount) > 0
+    ? `${formatCrypto(Number(amount) / sendQuote.nzd)} ${sendQuote.symbol}`
+    : "";
 
   if (loadingUser) {
     return <main className="center-screen"><Loader2 className="spin" /> Loading wallet...</main>;
@@ -506,22 +466,68 @@ export default function Home() {
         <button className="icon-button" onClick={logout} aria-label="Log out"><LogOut size={19} /></button>
       </header>
 
-      <section className="summary-band">
-        <div>
-          <span className="eyebrow">Wallet</span>
-          <h2>{walletNzdEstimate > 0 ? formatNzd(walletNzdEstimate) : "No funded assets found yet"}</h2>
-          {totalDisplay && <p className="summary-sub">{totalDisplay}</p>}
-          <button className="copy-line" onClick={() => navigator.clipboard.writeText(user.walletAddress || "")}>
-            {walletLabel} <Copy size={15} />
-          </button>
+      <section className="money-panel">
+        <div className="money-hero">
+          <span className="eyebrow">Bank balance</span>
+          <h2>{formatNzd(bankBalanceNzd)}</h2>
+          <p>Hackathon test balance for top-ups, withdrawals, and conversion estimates.</p>
         </div>
-        <div className="wallet-pill">{user.walletKind === "embedded" ? "Embedded wallet" : "Linked wallet"}</div>
+        <div className="money-control">
+          <label>
+            NZD amount
+            <input value={bankAmount} onChange={(event) => setBankAmount(event.target.value)} inputMode="decimal" placeholder="50.00" />
+          </label>
+          <div className="money-actions">
+            <button className="primary" onClick={() => updateTestBalance("top-up")} disabled={busy}>
+              <Check size={17} /> Add test money
+            </button>
+            <button className="secondary strong" onClick={() => updateTestBalance("withdraw")} disabled={busy}>
+              <Wallet size={17} /> Withdraw test money
+            </button>
+          </div>
+          {dataError && <p className="error">{dataError}</p>}
+          {dataStatus && <p className="success">{dataStatus}</p>}
+        </div>
       </section>
 
-      <div className="dashboard-grid">
+      <section className="dashboard-grid bottom-grid">
         <section className="panel">
           <div className="panel-head">
-            <h2>Assets</h2>
+            <h2>Send from NZD</h2>
+            <Send size={19} />
+          </div>
+          <form className="stack" onSubmit={sendTransfer}>
+            <label>
+              Convert to
+              <select value={sendAsset} onChange={(e) => setSendAsset(e.target.value)}>
+                {stableQuotes.map((quote) => (
+                  <option key={quote.id} value={quote.symbol}>
+                    {quote.symbol} - {quote.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Recipient wallet
+              <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x... or name.eth" required />
+            </label>
+            <label>
+              NZD amount
+              <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
+            </label>
+            {sendPreview && <p className="preview-line">Estimated send: <strong>{sendPreview}</strong></p>}
+            {sendError && <p className="error">{sendError}</p>}
+            {sendStatus && <p className="success">{sendStatus}</p>}
+            <button className="primary" disabled={busy || !sendQuote}>
+              {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+              Convert and send
+            </button>
+          </form>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Wallet backing</h2>
             <button className="icon-button" onClick={loadBalances} aria-label="Refresh balances"><RefreshCcw size={17} /></button>
           </div>
           <div className="asset-list">
@@ -537,45 +543,7 @@ export default function Home() {
             ))}
           </div>
         </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Send</h2>
-            <Send size={19} />
-          </div>
-          <form className="stack" onSubmit={sendTransfer}>
-            <label>
-              Asset
-              <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-                {flatAssets.map((asset) => (
-                  <option key={`${asset.chainId}:${asset.symbol}`} value={`${asset.chainId}:${asset.symbol}`}>
-                    {asset.symbol} on {asset.chainName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Recipient wallet
-              <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x... or name.eth" required />
-            </label>
-            <label>
-              Amount
-              <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.01" required />
-            </label>
-            {user.walletKind === "external" && (
-              <button type="button" className="secondary" onClick={connectInjectedWallet}>
-                <Link2 size={17} /> Connect signer wallet
-              </button>
-            )}
-            {sendError && <p className="error">{sendError}</p>}
-            {sendStatus && <p className="success">{sendStatus}</p>}
-            <button className="primary" disabled={busy || !selectedAsset}>
-              {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-              Send funds
-            </button>
-          </form>
-        </section>
-      </div>
+      </section>
 
       <section className="panel wide">
         <h2>Account details</h2>
@@ -590,51 +558,29 @@ export default function Home() {
           <button className="secondary" onClick={() => linkWallet()} disabled={!connectedWallet || busy}><Check size={17} /> Save linked wallet</button>
           <PrivyWalletButton onWallet={(address) => { setConnectedWallet(address); void linkWallet(address); }} />
         </div>
-        {dataError && <p className="error inline-message">{dataError}</p>}
-        {dataStatus && <p className="success inline-message">{dataStatus}</p>}
       </section>
 
-      <section className="dashboard-grid bottom-grid">
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Add or withdraw</h2>
-            <ExternalLink size={19} />
-          </div>
-          <div className="money-actions">
-            <button className="primary" onClick={() => openTransak("buy")}>
-              <ExternalLink size={17} /> Add with card
-            </button>
-            <button className="secondary strong" onClick={() => openTransak("sell")}>
-              <ExternalLink size={17} /> Withdraw to bank
-            </button>
-          </div>
-          <p className="muted-copy">
-            Real card and bank details are handled by the on/off-ramp provider, not stored by PocketRail.
-          </p>
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2>NZD estimates</h2>
-            <button className="icon-button" onClick={loadQuotes} aria-label="Refresh NZD quotes">
-              <RefreshCcw size={17} />
-            </button>
-          </div>
-          <div className="quote-grid">
-            {quotes.map((quote) => (
-              <div className="quote-row" key={quote.id}>
-                <span>
-                  <strong>{quote.symbol}</strong>
-                  <small>{quote.name}</small>
-                </span>
-                <span>
-                  <strong>{formatCrypto(nzdReference / quote.nzd)} {quote.symbol}</strong>
-                  <small>{formatNzd(quote.nzd)} each</small>
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
+      <section className="panel wide">
+        <div className="panel-head">
+          <h2>NZD estimates</h2>
+          <button className="icon-button" onClick={loadQuotes} aria-label="Refresh NZD quotes">
+            <RefreshCcw size={17} />
+          </button>
+        </div>
+        <div className="quote-grid">
+          {quotes.map((quote) => (
+            <div className="quote-row" key={quote.id}>
+              <span>
+                <strong>{quote.symbol}</strong>
+                <small>{quote.name}</small>
+              </span>
+              <span>
+                <strong>{formatCrypto(nzdReference / quote.nzd)} {quote.symbol}</strong>
+                <small>{formatNzd(quote.nzd)} each</small>
+              </span>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="dashboard-grid bottom-grid">
@@ -731,17 +677,6 @@ function shortAmount(value: string) {
   return number.toLocaleString(undefined, { maximumFractionDigits: 5 });
 }
 
-function tokenAddressFor(chainId: number, symbol: string) {
-  const known: Record<string, string> = {
-    "1:USDC": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-    "1:USDT": "0xdac17f958d2ee523a2206206994597c13d831ec7",
-    "11155111:USDC": "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",
-  };
-  const address = known[`${chainId}:${symbol}`];
-  if (!address) throw new Error("Unsupported browser token transfer.");
-  return address;
-}
-
 function timeAgo(timestamp: string) {
   const then = new Date(timestamp).getTime();
   if (!Number.isFinite(then)) return "recently";
@@ -753,16 +688,6 @@ function timeAgo(timestamp: string) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
-}
-
-function estimateWalletNzd(assets: Asset[], quotes: CryptoQuote[]) {
-  const bySymbol = new Map(quotes.map((quote) => [quote.symbol, quote.nzd]));
-  return assets.reduce((total, asset) => {
-    if (asset.chainId === 11155111) return total;
-    const quote = bySymbol.get(asset.symbol);
-    if (!quote) return total;
-    return total + Number(asset.balance) * quote;
-  }, 0);
 }
 
 function formatNzd(value: number) {
@@ -778,25 +703,6 @@ function formatCrypto(value: number) {
   if (value > 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (value > 1) return value.toLocaleString(undefined, { maximumFractionDigits: 5 });
   return value.toLocaleString(undefined, { maximumFractionDigits: 8 });
-}
-
-async function switchExternalWalletToChain(chainId: number) {
-  if (!window.ethereum) throw new Error("Open your browser wallet to sign this transfer.");
-  const chain = clientChains[chainId];
-  if (!chain) throw new Error("Unsupported network.");
-
-  try {
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: chain.chainId }],
-    });
-  } catch (error: any) {
-    if (error?.code !== 4902) throw error;
-    await window.ethereum.request({
-      method: "wallet_addEthereumChain",
-      params: [chain],
-    });
-  }
 }
 
 function walletErrorMessage(error: unknown) {

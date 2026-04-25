@@ -1,4 +1,15 @@
-const cryptoIds = ["bitcoin", "ethereum", "solana", "usd-coin", "tether"];
+const cryptoIds = [
+  "bitcoin",
+  "ethereum",
+  "solana",
+  "usd-coin",
+  "tether",
+  "dai",
+  "binance-usd",
+  "paypal-usd",
+  "first-digital-usd",
+  "true-usd",
+];
 
 export type CryptoQuote = {
   id: string;
@@ -13,6 +24,11 @@ const metadata: Record<string, { symbol: string; name: string }> = {
   solana: { symbol: "SOL", name: "Solana" },
   "usd-coin": { symbol: "USDC", name: "USD Coin" },
   tether: { symbol: "USDT", name: "Tether" },
+  dai: { symbol: "DAI", name: "Dai" },
+  "binance-usd": { symbol: "BUSD", name: "Binance USD" },
+  "paypal-usd": { symbol: "PYUSD", name: "PayPal USD" },
+  "first-digital-usd": { symbol: "FDUSD", name: "First Digital USD" },
+  "true-usd": { symbol: "TUSD", name: "TrueUSD" },
 };
 
 export async function getNzdQuotes(): Promise<CryptoQuote[]> {
