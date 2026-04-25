@@ -21,11 +21,13 @@ import {
   History,
   Loader2,
   LogOut,
+  Pencil,
   Send,
   ShieldCheck,
   Trash2,
   UserPlus,
   Wallet,
+  X,
 } from "lucide-react";
 
 type User = {
@@ -135,6 +137,17 @@ type BalanceTimelinePoint = {
   balance: number;
 };
 
+type ProfileFormState = {
+  name: string;
+  username: string;
+  email: string;
+  regionCode: string;
+};
+
+type WalletFormState = {
+  walletAddress: string;
+};
+
 type DashboardView = "overview" | "pay" | "activity" | "profile";
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
@@ -149,7 +162,6 @@ const DASHBOARD_VIEWS: { id: DashboardView; label: string; hint: string }[] = [
   { id: "overview", label: "Overview", hint: "Balance and shortcuts" },
   { id: "pay", label: "Pay", hint: "Send dNZD" },
   { id: "activity", label: "Transaction History", hint: "Transactions and settlement" },
-  { id: "profile", label: "Profile", hint: "Account and region" },
 ];
 const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   aiEnabled: false,
@@ -194,13 +206,25 @@ export default function Home() {
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
   const [profileError, setProfileError] = useState("");
+  const [profileEditMode, setProfileEditMode] = useState(false);
+  const [contactEditMode, setContactEditMode] = useState(false);
+  const [walletEditMode, setWalletEditMode] = useState(false);
+  const [profileForm, setProfileForm] = useState<ProfileFormState>({
+    name: "",
+    username: "",
+    email: "",
+    regionCode: "NZ",
+  });
+  const [walletForm, setWalletForm] = useState<WalletFormState>({ walletAddress: "" });
+  const [walletBusy, setWalletBusy] = useState(false);
+  const [walletStatus, setWalletStatus] = useState("");
+  const [walletError, setWalletError] = useState("");
   const [automation, setAutomation] = useState<AutomationSettings>(DEFAULT_AUTOMATION_SETTINGS);
   const [savedRecipients, setSavedRecipients] = useState<SavedRecipient[]>([]);
   const [automationBusy, setAutomationBusy] = useState(false);
   const [automationError, setAutomationError] = useState("");
   const [automationStatus, setAutomationStatus] = useState("");
-  const [savedRecipientDraft, setSavedRecipientDraft] = useState("");
-  const [savedRecipientNickname, setSavedRecipientNickname] = useState("");
+  const [recipientNicknameDrafts, setRecipientNicknameDrafts] = useState<Record<number, string>>({});
   const [usernameState, setUsernameState] = useState<{
     checking: boolean;
     available: boolean;
@@ -255,8 +279,25 @@ export default function Home() {
       setSavedRecipients([]);
       return;
     }
+    setProfileForm({
+      name: user.name,
+      username: user.username,
+      email: user.email,
+      regionCode: user.regionCode,
+    });
+    setProfileEditMode(false);
+    setWalletForm({
+      walletAddress: user.linkedWalletAddress || user.walletAddress || "",
+    });
+    setWalletEditMode(false);
     void loadAutomation();
   }, [user?.id]);
+
+  useEffect(() => {
+    setRecipientNicknameDrafts(
+      Object.fromEntries(savedRecipients.map((savedRecipient) => [savedRecipient.id, savedRecipient.nickname || ""])),
+    );
+  }, [savedRecipients]);
 
   useEffect(() => {
     if (!selectedWalletAddress && walletOptions.length > 0) {
@@ -448,14 +489,33 @@ export default function Home() {
     }
   }
 
-  async function updateRegion(regionCode: string) {
+  async function connectWalletForProfile() {
+    setWalletError("");
+    setWalletStatus("");
+    try {
+      if (!window.ethereum?.request) {
+        throw new Error("No browser wallet found. Paste your wallet address instead.");
+      }
+      const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
+      if (!accounts?.[0]) {
+        throw new Error("No wallet account selected.");
+      }
+      setWalletForm({ walletAddress: accounts[0] });
+    } catch (err) {
+      setWalletError(err instanceof Error ? err.message : "Could not connect wallet");
+    }
+  }
+
+  async function saveProfileDetails(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setProfileBusy(true);
     setProfileError("");
     setProfileStatus("");
     try {
-      const data = await api<{ user: User }>("/api/profile", { regionCode });
+      const data = await api<{ user: User }>("/api/profile", profileForm);
       setUser(data.user);
-      setProfileStatus("Display region updated.");
+      setProfileEditMode(false);
+      setProfileStatus("Account details updated.");
     } catch (err) {
       setProfileError(err instanceof Error ? err.message : "Could not update profile");
     } finally {
@@ -502,11 +562,6 @@ export default function Home() {
     }
   }
 
-  async function saveRecipientFromProfile(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await saveRecipient(savedRecipientDraft, savedRecipientNickname);
-  }
-
   async function saveRecipient(identifier: string, nickname = "") {
     const trimmedIdentifier = identifier.trim();
     if (!trimmedIdentifier) {
@@ -522,8 +577,6 @@ export default function Home() {
         nickname: nickname.trim() || undefined,
       });
       applyAutomationOverview(data);
-      setSavedRecipientDraft("");
-      setSavedRecipientNickname("");
       setAutomationStatus("Recipient saved for future transfers and automation.");
     } catch (err) {
       setAutomationError(err instanceof Error ? err.message : "Could not save recipient");
@@ -553,6 +606,54 @@ export default function Home() {
       setAutomationStatus("Recipient removed from your saved list.");
     } catch (err) {
       setAutomationError(err instanceof Error ? err.message : "Could not remove recipient");
+    } finally {
+      setAutomationBusy(false);
+    }
+  }
+
+  async function saveLinkedWallet(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWalletBusy(true);
+    setWalletError("");
+    setWalletStatus("");
+    try {
+      const data = await api<{ user: User }>("/api/wallet/link", {
+        walletAddress: walletForm.walletAddress,
+      });
+      setUser(data.user);
+      setWalletEditMode(false);
+      setWalletStatus("Linked wallet updated.");
+    } catch (err) {
+      setWalletError(err instanceof Error ? err.message : "Could not update linked wallet");
+    } finally {
+      setWalletBusy(false);
+    }
+  }
+
+  async function updateRecipientNickname(savedRecipientId: number) {
+    setAutomationBusy(true);
+    setAutomationError("");
+    setAutomationStatus("");
+    try {
+      const res = await fetch("/api/automation/recipients", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          savedRecipientId,
+          nickname: recipientNicknameDrafts[savedRecipientId] || "",
+        }),
+      });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) as AutomationOverview & { error?: string } : undefined;
+      if (!res.ok) {
+        throw new Error(data?.error || "Could not update recipient");
+      }
+      if (data) {
+        applyAutomationOverview(data);
+      }
+      setAutomationStatus("Saved contact details updated.");
+    } catch (err) {
+      setAutomationError(err instanceof Error ? err.message : "Could not update recipient");
     } finally {
       setAutomationBusy(false);
     }
@@ -670,10 +771,15 @@ export default function Home() {
     setAuthError("");
     setSendError("");
     setDataError("");
+    setProfileEditMode(false);
+    setContactEditMode(false);
+    setWalletEditMode(false);
     setAutomation(DEFAULT_AUTOMATION_SETTINGS);
     setSavedRecipients([]);
     setAutomationError("");
     setAutomationStatus("");
+    setWalletError("");
+    setWalletStatus("");
     setActiveView("overview");
   }
 
@@ -902,14 +1008,18 @@ export default function Home() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="profile-identity">
+          <button
+            type="button"
+            className={activeView === "profile" ? "profile-identity active" : "profile-identity"}
+            onClick={() => setActiveView("profile")}
+          >
             <div className="identity-avatar">{user.name.slice(0, 1).toUpperCase()}</div>
             <div>
               <strong>{user.name}</strong>
               <span>@{user.username}</span>
               <small>{user.email}</small>
             </div>
-          </div>
+          </button>
 
           <button className="secondary logout-button" onClick={logout}>
             <LogOut size={16} /> Log out
@@ -922,22 +1032,6 @@ export default function Home() {
           <div>
             <p className="eyebrow">Dashboard</p>
             <h2>{dashboardTitle(activeView, user.name)}</h2>
-          </div>
-          <div className="topbar-actions">
-            <button className="secondary" type="button" onClick={() => setActiveView("pay")}>
-              <Send size={16} /> New payment
-            </button>
-            <button
-              className="icon-button"
-              type="button"
-              onClick={() => {
-                void loadTransactions();
-                void loadBalances();
-              }}
-              aria-label="Refresh dashboard"
-            >
-              <History size={17} />
-            </button>
           </div>
         </header>
 
@@ -1209,18 +1303,61 @@ export default function Home() {
                     <p className="eyebrow">Profile</p>
                     <h3>Account details</h3>
                   </div>
-                  <BadgeCheck size={18} />
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      if (profileEditMode) {
+                        setProfileForm({
+                          name: user.name,
+                          username: user.username,
+                          email: user.email,
+                          regionCode: user.regionCode,
+                        });
+                        setProfileEditMode(false);
+                        setProfileError("");
+                        setProfileStatus("");
+                        return;
+                      }
+                      setProfileEditMode(true);
+                    }}
+                  >
+                    {profileEditMode ? <X size={16} /> : <Pencil size={16} />}
+                    {profileEditMode ? "Cancel" : "Edit"}
+                  </button>
                 </div>
-                <div className="profile-box profile-panel">
-                  <strong>@{user.username}</strong>
-                  <span>{user.name}</span>
-                  <small>{user.email}</small>
+                <form className="profile-box profile-panel" onSubmit={saveProfileDetails}>
+                  <label>
+                    Display name
+                    <input
+                      value={profileForm.name}
+                      onChange={(event) => setProfileForm((current) => ({ ...current, name: event.target.value }))}
+                      disabled={!profileEditMode || profileBusy}
+                    />
+                  </label>
+                  <label>
+                    Username
+                    <input
+                      value={profileForm.username}
+                      onChange={(event) => setProfileForm((current) => ({ ...current, username: event.target.value }))}
+                      disabled={!profileEditMode || profileBusy}
+                    />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      type="email"
+                      value={profileForm.email}
+                      onChange={(event) => setProfileForm((current) => ({ ...current, email: event.target.value }))}
+                      disabled={!profileEditMode || profileBusy}
+                    />
+                  </label>
                   <label>
                     Region
                     <select
-                      value={user.regionCode}
-                      onChange={(event) => void updateRegion(event.target.value)}
-                      disabled={profileBusy}
+                      value={profileForm.regionCode}
+                      onChange={(event) => setProfileForm((current) => ({ ...current, regionCode: event.target.value }))}
+                      disabled={!profileEditMode || profileBusy}
                     >
                       {REGION_OPTIONS.map((option) => (
                         <option key={option.code} value={option.code}>
@@ -1229,11 +1366,78 @@ export default function Home() {
                       ))}
                     </select>
                   </label>
-                  <small>Display currency: {displayCurrency}</small>
-                  <small>Linked wallet {shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</small>
                   {profileError && <p className="error">{profileError}</p>}
                   {profileStatus && <p className="success">{profileStatus}</p>}
+                  {profileEditMode && (
+                    <button className="primary" disabled={profileBusy}>
+                      {profileBusy ? <Loader2 className="spin" size={18} /> : <BadgeCheck size={18} />}
+                      Save account details
+                    </button>
+                  )}
+                </form>
+
+                <div className="settings-divider" />
+
+                <div className="panel-head nested-head">
+                  <div>
+                    <p className="eyebrow">Wallet</p>
+                    <h3>Edit wallet</h3>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      if (walletEditMode) {
+                        setWalletForm({
+                          walletAddress: user.linkedWalletAddress || user.walletAddress || "",
+                        });
+                        setWalletEditMode(false);
+                        setWalletError("");
+                        setWalletStatus("");
+                        return;
+                      }
+                      setWalletEditMode(true);
+                    }}
+                  >
+                    {walletEditMode ? <X size={16} /> : <Pencil size={16} />}
+                    {walletEditMode ? "Cancel" : "Edit"}
+                  </button>
                 </div>
+
+                <form className="profile-box profile-panel" onSubmit={saveLinkedWallet}>
+                  <div className="wallet-summary">
+                    <strong>{shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</strong>
+                    <small>Currently linked wallet</small>
+                    {user.ensName && <small>{user.ensName}</small>}
+                  </div>
+
+                  {walletEditMode && (
+                    <div className="stack compact-stack">
+                      <button className="secondary" type="button" onClick={() => void connectWalletForProfile()}>
+                        <Wallet size={16} /> Connect browser wallet
+                      </button>
+                      <label>
+                        Wallet address
+                        <input
+                          value={walletForm.walletAddress}
+                          onChange={(event) => setWalletForm({ walletAddress: event.target.value })}
+                          placeholder="0x..."
+                          disabled={walletBusy}
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {walletError && <p className="error">{walletError}</p>}
+                  {walletStatus && <p className="success">{walletStatus}</p>}
+
+                  {walletEditMode && (
+                    <button className="primary" disabled={walletBusy}>
+                      {walletBusy ? <Loader2 className="spin" size={18} /> : <BadgeCheck size={18} />}
+                      Save linked wallet
+                    </button>
+                  )}
+                </form>
 
                 <div className="settings-divider" />
 
@@ -1246,35 +1450,41 @@ export default function Home() {
                 </div>
 
                 <form className="stack" onSubmit={saveAutomationSettings}>
-                  <label className="toggle-row">
-                    <div>
+                  <div className="toggle-row">
+                    <div className="toggle-copy">
                       <strong>Enable AI access</strong>
                       <small>Allow an agent to read your guardrails and prepare transaction requests.</small>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={automation.aiEnabled}
-                      onChange={(event) =>
-                        setAutomation((current) => ({ ...current, aiEnabled: event.target.checked }))
+                    <button
+                      type="button"
+                      className={automation.aiEnabled ? "toggle-button active" : "toggle-button"}
+                      aria-pressed={automation.aiEnabled}
+                      onClick={() =>
+                        setAutomation((current) => ({ ...current, aiEnabled: !current.aiEnabled }))
                       }
-                    />
-                  </label>
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </div>
 
                   {automation.aiEnabled ? (
                     <div className="stack">
-                      <label className="toggle-row">
-                        <div>
+                      <div className="toggle-row">
+                        <div className="toggle-copy">
                           <strong>Enable autopay</strong>
                           <small>Let approved requests move ahead without manual review when they stay under your limit.</small>
                         </div>
-                        <input
-                          type="checkbox"
-                          checked={automation.autopayEnabled}
-                          onChange={(event) =>
-                            setAutomation((current) => ({ ...current, autopayEnabled: event.target.checked }))
+                        <button
+                          type="button"
+                          className={automation.autopayEnabled ? "toggle-button active" : "toggle-button"}
+                          aria-pressed={automation.autopayEnabled}
+                          onClick={() =>
+                            setAutomation((current) => ({ ...current, autopayEnabled: !current.autopayEnabled }))
                           }
-                        />
-                      </label>
+                        >
+                          <span className="toggle-knob" />
+                        </button>
+                      </div>
 
                       <label>
                         Recipient policy
@@ -1357,22 +1567,16 @@ export default function Home() {
                         <small>{automation.dailyUsedAmountNzd} dNZD already used in the last 24 hours</small>
                         <small>{automation.dailyRemainingAmountNzd} dNZD remaining before the daily cap</small>
                       </div>
+
+                      <button className="primary" disabled={automationBusy}>
+                        {automationBusy ? <Loader2 className="spin" size={18} /> : <ShieldCheck size={18} />}
+                        Save automation settings
+                      </button>
                     </div>
-                  ) : (
-                    <div className="collapsed-helper">
-                      <p className="muted-copy">
-                        Turn AI access on to reveal transaction limits, approved channels, and autopay controls.
-                      </p>
-                    </div>
-                  )}
+                  ) : null}
 
                   {automationError && <p className="error">{automationError}</p>}
                   {automationStatus && <p className="success">{automationStatus}</p>}
-
-                  <button className="primary" disabled={automationBusy}>
-                    {automationBusy ? <Loader2 className="spin" size={18} /> : <ShieldCheck size={18} />}
-                    Save automation settings
-                  </button>
                 </form>
 
                 <div className="settings-divider" />
@@ -1380,45 +1584,63 @@ export default function Home() {
                 <div className="panel-head nested-head">
                   <div>
                     <p className="eyebrow">Recipients</p>
-                    <h3>Saved contacts</h3>
+                    <h3>Edit contact details</h3>
                   </div>
-                  <UserPlus size={18} />
-                </div>
-
-                <form className="stack compact-stack" onSubmit={saveRecipientFromProfile}>
-                  <label>
-                    PocketRail user
-                    <input
-                      value={savedRecipientDraft}
-                      onChange={(event) => setSavedRecipientDraft(event.target.value)}
-                      placeholder="@username or wallet address"
-                    />
-                  </label>
-                  <label>
-                    Nickname
-                    <input
-                      value={savedRecipientNickname}
-                      onChange={(event) => setSavedRecipientNickname(event.target.value)}
-                      placeholder="Mum, supplier, Auckland ops"
-                    />
-                  </label>
-                  <button className="secondary strong" type="submit" disabled={automationBusy}>
-                    <UserPlus size={16} /> Save recipient
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      if (contactEditMode) {
+                        setRecipientNicknameDrafts(
+                          Object.fromEntries(savedRecipients.map((savedRecipient) => [savedRecipient.id, savedRecipient.nickname || ""])),
+                        );
+                      }
+                      setContactEditMode((current) => !current);
+                    }}
+                  >
+                    {contactEditMode ? <X size={16} /> : <Pencil size={16} />}
+                    {contactEditMode ? "Done" : "Edit"}
                   </button>
-                </form>
+                </div>
 
                 <div className="recipient-list">
                   {savedRecipients.length === 0 ? (
-                    <p className="muted-copy empty-state">No saved recipients yet. Add trusted contacts here for repeat payments and AI automation.</p>
+                    <p className="muted-copy empty-state">No saved recipients yet. Save a recipient from the pay screen to manage their contact details here.</p>
                   ) : (
                     savedRecipients.map((savedRecipient) => (
                       <div className="recipient-card" key={savedRecipient.id}>
                         <div>
-                          <strong>{recipientDisplayName(savedRecipient)}</strong>
+                          {contactEditMode ? (
+                            <label className="recipient-edit-field">
+                              Nickname
+                              <input
+                                value={recipientNicknameDrafts[savedRecipient.id] || ""}
+                                onChange={(event) =>
+                                  setRecipientNicknameDrafts((current) => ({
+                                    ...current,
+                                    [savedRecipient.id]: event.target.value,
+                                  }))
+                                }
+                                placeholder={savedRecipient.name}
+                              />
+                            </label>
+                          ) : (
+                            <strong>{recipientDisplayName(savedRecipient)}</strong>
+                          )}
                           <small>@{savedRecipient.username}</small>
                           <small>{shortAddress(savedRecipient.walletAddress || "")}</small>
                         </div>
                         <div className="recipient-actions">
+                          {contactEditMode && (
+                            <button
+                              className="secondary"
+                              type="button"
+                              onClick={() => void updateRecipientNickname(savedRecipient.id)}
+                              disabled={automationBusy}
+                            >
+                              <BadgeCheck size={15} /> Save
+                            </button>
+                          )}
                           <button
                             className="secondary"
                             type="button"

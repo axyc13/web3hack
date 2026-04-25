@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { addSavedRecipient, removeSavedRecipient } from "@/lib/automation";
+import { addSavedRecipient, removeSavedRecipient, updateSavedRecipient } from "@/lib/automation";
 import { requireUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -12,6 +12,11 @@ const addRecipientSchema = z.object({
 
 const removeRecipientSchema = z.object({
   savedRecipientId: z.number().int().positive(),
+});
+
+const updateRecipientSchema = z.object({
+  savedRecipientId: z.number().int().positive(),
+  nickname: z.string().max(40).optional(),
 });
 
 export async function POST(request: Request) {
@@ -32,6 +37,17 @@ export async function DELETE(request: Request) {
     return NextResponse.json(removeSavedRecipient(user.id, input.savedRecipientId));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not remove recipient";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const user = await requireUser();
+    const input = updateRecipientSchema.parse(await request.json());
+    return NextResponse.json(updateSavedRecipient(user.id, input.savedRecipientId, input.nickname));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not update recipient";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

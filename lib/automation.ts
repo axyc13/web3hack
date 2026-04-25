@@ -153,6 +153,25 @@ export function removeSavedRecipient(userId: number, savedRecipientId: number) {
   return getAutomationOverview(userId);
 }
 
+export function updateSavedRecipient(userId: number, savedRecipientId: number, nickname?: string | null) {
+  const existing = db()
+    .prepare("SELECT id FROM saved_recipients WHERE id = ? AND user_id = ?")
+    .get(savedRecipientId, userId) as { id: number } | undefined;
+  if (!existing) {
+    throw new Error("Saved recipient not found.");
+  }
+
+  db()
+    .prepare(
+      `UPDATE saved_recipients
+       SET nickname = ?
+       WHERE id = ? AND user_id = ?`,
+    )
+    .run(normalizeNickname(nickname), savedRecipientId, userId);
+
+  return getAutomationOverview(userId);
+}
+
 export function isSavedRecipient(userId: number, recipientUserId: number) {
   const row = db()
     .prepare("SELECT id FROM saved_recipients WHERE user_id = ? AND recipient_user_id = ?")
