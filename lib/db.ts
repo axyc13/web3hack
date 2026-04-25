@@ -60,6 +60,23 @@ export function db() {
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS fiat_accounts (
+        user_id INTEGER PRIMARY KEY,
+        nzd_cents INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS fiat_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('top_up', 'withdrawal')),
+        amount_cents INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        note TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
     `);
     globalThis.walletAppDb = instance;
   }

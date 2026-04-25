@@ -16,6 +16,22 @@ export async function resolveEnsName(address: string | null) {
   }
 }
 
+export async function resolveEnsAddress(nameOrAddress: string) {
+  const value: string = nameOrAddress.trim();
+  if (isAddress(value)) return value;
+  if (!String(value).toLowerCase().endsWith(".eth")) return null;
+
+  const ethereum = chains.find((chain) => chain.id === 1);
+  if (!ethereum) return null;
+
+  try {
+    const provider = new ethers.JsonRpcProvider(ethereum.rpcUrl, 1);
+    return await provider.resolveName(value);
+  } catch {
+    return null;
+  }
+}
+
 export async function refreshEnsForUser(user: DbUser) {
   if (!user.wallet_address) return user;
 

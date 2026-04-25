@@ -11,6 +11,7 @@ export type ChainConfig = {
   name: string;
   rpcUrl: string;
   explorer: string;
+  blockscoutApi?: string;
   native: TokenConfig;
   tokens: TokenConfig[];
 };
@@ -21,6 +22,7 @@ export const chains: ChainConfig[] = [
     name: "Sepolia",
     rpcUrl: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia.publicnode.com",
     explorer: "https://sepolia.etherscan.io/tx/",
+    blockscoutApi: "https://eth-sepolia.blockscout.com/api/v2",
     native: { symbol: "ETH", name: "Sepolia Ether", decimals: 18, native: true },
     tokens: [
       {
@@ -36,6 +38,7 @@ export const chains: ChainConfig[] = [
     name: "Ethereum",
     rpcUrl: process.env.ETHEREUM_RPC_URL || "https://ethereum.publicnode.com",
     explorer: "https://etherscan.io/tx/",
+    blockscoutApi: "https://eth.blockscout.com/api/v2",
     native: { symbol: "ETH", name: "Ether", decimals: 18, native: true },
     tokens: [
       {

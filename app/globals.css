@@ -152,6 +152,13 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   background: transparent;
   color: var(--muted);
 }
+.field-icon {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  color: var(--muted);
+  pointer-events: none;
+}
 
 .wallet-choice {
   padding: 14px;
@@ -192,6 +199,9 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   color: var(--ink);
   padding: 0 12px;
 }
+.secondary.strong {
+  font-weight: 800;
+}
 .address-chip {
   display: block;
   padding: 10px;
@@ -210,6 +220,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .error, .success { margin: 0; padding: 10px 12px; border-radius: 6px; font-weight: 700; }
 .error { color: var(--red); background: #fff5f5; }
 .success { color: var(--green); background: #ebfbee; }
+.inline-message { margin-top: 14px; }
 
 .dashboard {
   max-width: 1180px;
@@ -256,6 +267,11 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 }
 .summary-band .eyebrow { color: #bfdbfe; }
 .summary-band h2 { font-size: 40px; }
+.summary-sub {
+  margin: 10px 0 0;
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 800;
+}
 .copy-line {
   margin-top: 14px;
   border: 1px solid rgba(255, 255, 255, 0.30);
@@ -278,6 +294,7 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 }
 .panel { padding: 22px; }
 .wide { margin-top: 20px; }
+.bottom-grid { margin-top: 20px; }
 .asset-list { display: grid; gap: 10px; margin-top: 16px; }
 .asset {
   width: 100%;
@@ -308,6 +325,104 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 }
 .detail-grid span { color: var(--muted); }
 .break { overflow-wrap: anywhere; }
+.muted-copy {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.compact { margin-bottom: 8px; }
+.icon-button.small {
+  width: 34px;
+  height: 34px;
+}
+.key-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: #fbfcff;
+  border-radius: 6px;
+}
+.key-box code {
+  display: block;
+  padding: 10px;
+  background: #edf1f8;
+  color: var(--ink);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.tx-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.tx-row {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  text-decoration: none;
+  border-radius: 6px;
+  background: white;
+}
+.tx-row:hover { border-color: var(--blue); }
+.tx-row span:nth-child(2) {
+  display: grid;
+  gap: 3px;
+}
+.tx-row small {
+  color: var(--muted);
+}
+.direction {
+  display: inline-flex;
+  justify-content: center;
+  padding: 6px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: capitalize;
+}
+.direction.incoming { color: var(--green); background: #ebfbee; }
+.direction.outgoing { color: var(--blue-dark); background: #eff6ff; }
+.direction.self, .direction.unknown { color: var(--muted); background: #edf1f8; }
+.tx-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.money-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 16px 0;
+}
+.quote-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.quote-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.quote-row span {
+  display: grid;
+  gap: 3px;
+}
+.quote-row span:last-child {
+  text-align: right;
+}
+.quote-row small {
+  color: var(--muted);
+}
 
 @media (max-width: 900px) {
   .auth-page, .dashboard-grid { grid-template-columns: 1fr; }
@@ -321,4 +436,9 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
   .choice-grid, .detail-grid { grid-template-columns: 1fr; }
   .summary-band h2 { font-size: 30px; }
   .topbar h1 { font-size: 28px; }
+  .tx-row { grid-template-columns: 1fr; }
+  .tx-meta { justify-content: space-between; }
+  .money-actions { grid-template-columns: 1fr; }
+  .quote-row { display: grid; }
+  .quote-row span:last-child { text-align: left; }
 }
