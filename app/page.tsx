@@ -148,7 +148,7 @@ const erc20BalanceAbi = [
 const DASHBOARD_VIEWS: { id: DashboardView; label: string; hint: string }[] = [
   { id: "overview", label: "Overview", hint: "Balance and shortcuts" },
   { id: "pay", label: "Pay", hint: "Send dNZD" },
-  { id: "activity", label: "Activity", hint: "Transactions and settlement" },
+  { id: "activity", label: "Transaction History", hint: "Transactions and settlement" },
   { id: "profile", label: "Profile", hint: "Account and region" },
 ];
 const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
@@ -1165,7 +1165,7 @@ export default function Home() {
               <div className="panel-head">
                 <div>
                   <p className="eyebrow">Activity</p>
-                  <h3>Transaction history</h3>
+                  <h3>Latest activity</h3>
                 </div>
                 <button
                   className="icon-button"
@@ -1456,7 +1456,7 @@ function dashboardTitle(view: DashboardView, name: string) {
     case "pay":
       return "Send a payment";
     case "activity":
-      return "Recent activity";
+      return "Transaction history";
     case "profile":
       return "Manage your account";
     default:
