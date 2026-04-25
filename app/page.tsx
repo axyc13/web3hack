@@ -1,17 +1,13 @@
 "use client";
 
-import { BrowserProvider, Contract, formatUnits, parseUnits } from "ethers";
+import { BrowserProvider, Contract, parseUnits } from "ethers";
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
-  Check,
-  Copy,
   Eye,
   EyeOff,
   ExternalLink,
   History,
-  KeyRound,
-  Lock,
   Loader2,
   LogOut,
   Send,
@@ -26,9 +22,8 @@ type User = {
   email: string;
   walletAddress: string | null;
   linkedWalletAddress: string | null;
-  walletKind: "external" | "embedded" | null;
+  walletKind: "external" | null;
   ensName: string | null;
-  hasServerWallet: boolean;
 };
 
 type WalletTransaction = {
@@ -48,29 +43,24 @@ type WalletTransaction = {
   source: "explorer" | "local" | "app";
 };
 
-type FiatAccount = {
-  balanceCents: number;
-  balanceUsd: string;
-  events: Array<{
-    id: number;
-    kind: "top_up" | "withdrawal";
-    amountUsd: string;
-    status: string;
-    provider: string;
-    note: string | null;
-    createdAt: string;
-  }>;
+type WalletAsset = {
+  symbol: string;
+  name: string;
+  chainId: number;
+  chainName: string;
+  decimals: number;
+  balance: string;
+  rawBalance: string;
+  native: boolean;
 };
 
-type DisplayCurrency = "NZD" | "USD" | "AUD" | "EUR" | "GBP";
-
-const displayCurrencies: Array<{ code: DisplayCurrency; label: string; usdRate: number; locale: string }> = [
-  { code: "NZD", label: "New Zealand dollar", usdRate: 1.68, locale: "en-NZ" },
-  { code: "USD", label: "US dollar", usdRate: 1, locale: "en-US" },
-  { code: "AUD", label: "Australian dollar", usdRate: 1.54, locale: "en-AU" },
-  { code: "EUR", label: "Euro", usdRate: 0.92, locale: "de-DE" },
-  { code: "GBP", label: "British pound", usdRate: 0.79, locale: "en-GB" },
-];
+type WalletBalanceGroup = {
+  chain: {
+    id: number;
+    name: string;
+  };
+  assets: WalletAsset[];
+};
 
 type PreparedTransfer = {
   chainId: number;
@@ -79,7 +69,6 @@ type PreparedTransfer = {
     address: string;
     decimals: number;
   };
-  ethProofWei: string;
   senderWalletAddress: string;
   recipientWalletAddress: string;
   recipient: {
@@ -89,40 +78,29 @@ type PreparedTransfer = {
   };
 };
 
-const erc20TransferAbi = ["function transfer(address to, uint256 amount) returns (bool)"];
+const BASE_SEPOLIA_CHAIN_ID = 84532;
+const BASE_SEPOLIA_CHAIN_HEX = "0x14a34";
+const BASE_SEPOLIA_RPC_URL = "https://sepolia.base.org";
+const BASE_SEPOLIA_EXPLORER = "https://sepolia.basescan.org/tx/";
 const erc20BalanceAbi = [
   "function balanceOf(address owner) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
-
-declare global {
-  interface Window {
-    ethereum?: any;
-  }
-}
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
-  const [fiat, setFiat] = useState<FiatAccount | null>(null);
+  const [balanceGroups, setBalanceGroups] = useState<WalletBalanceGroup[]>([]);
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
-  const [bankAmount, setBankAmount] = useState("50");
-  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("NZD");
-  const [exportPassword, setExportPassword] = useState("");
-  const [privateKey, setPrivateKey] = useState("");
-  const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [authStatus, setAuthStatus] = useState("");
   const [sendStatus, setSendStatus] = useState("");
   const [sendLink, setSendLink] = useState("");
-  const [exportStatus, setExportStatus] = useState("");
-  const [dataStatus, setDataStatus] = useState("");
+  const [dataError, setDataError] = useState("");
   const [authError, setAuthError] = useState("");
   const [sendError, setSendError] = useState("");
-  const [exportError, setExportError] = useState("");
-  const [dataError, setDataError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({
@@ -130,7 +108,6 @@ export default function Home() {
     username: "",
     email: "",
     password: "",
-    walletMode: "embedded" as "embedded" | "external",
     walletAddress: "",
   });
   const [usernameState, setUsernameState] = useState<{
@@ -147,10 +124,38 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (user?.walletAddress) {
+    if (!user?.walletAddress) return;
+    void loadTransactions();
+    void loadBalances();
+  }, [user?.walletAddress]);
+
+  useEffect(() => {
+    if (!user?.walletAddress) return;
+
+    const refresh = () => {
       void loadTransactions();
-      void loadFiat();
-    }
+      void loadBalances();
+    };
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        refresh();
+      }
+    }, 10000);
+    const onFocus = () => refresh();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refresh();
+      }
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [user?.walletAddress]);
 
   useEffect(() => {
@@ -224,13 +229,9 @@ export default function Home() {
       if (authMode === "register" && !usernameState.available) {
         throw new Error(usernameState.message || "Choose a unique username first.");
       }
-      const payload =
-        authMode === "login"
-          ? { email: form.email, password: form.password }
-          : {
-              ...form,
-              walletAddress: form.walletMode === "external" ? form.walletAddress : undefined,
-            };
+      const payload = authMode === "login"
+        ? { email: form.email, password: form.password }
+        : form;
       const data = await api<{ user: User }>(
         authMode === "login" ? "/api/auth/login" : "/api/auth/register",
         payload,
@@ -254,7 +255,7 @@ export default function Home() {
       if (!accounts?.[0]) {
         throw new Error("No wallet account selected.");
       }
-      setForm((current) => ({ ...current, walletMode: "external", walletAddress: accounts[0] }));
+      setForm((current) => ({ ...current, walletAddress: accounts[0] }));
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Could not connect wallet");
     }
@@ -269,54 +270,12 @@ export default function Home() {
     }
   }
 
-  async function loadFiat() {
+  async function loadBalances() {
     try {
-      const data = await api<{ fiat: FiatAccount }>("/api/fiat");
-      setFiat(data.fiat);
+      const data = await api<{ balances: WalletBalanceGroup[] }>("/api/wallet/balances");
+      setBalanceGroups(data.balances);
     } catch (err) {
-      setDataError(err instanceof Error ? err.message : "Could not load account");
-    }
-  }
-
-  async function updateTestBalance(kind: "top-up" | "withdraw") {
-    setDataError("");
-    setDataStatus("");
-    setBusy(true);
-    try {
-      const data = await api<{ fiat: FiatAccount }>(
-        kind === "top-up" ? "/api/fiat/top-up" : "/api/fiat/withdraw",
-        { amountUsd: displayToUsd(bankAmount, displayCurrency) },
-      );
-      setFiat(data.fiat);
-      setDataStatus(
-        kind === "top-up"
-          ? `Added ${formatCurrency(Number(bankAmount), displayCurrency)} test value to the app ledger.`
-          : `Withdrew ${formatCurrency(Number(bankAmount), displayCurrency)} test value from the app ledger.`,
-      );
-    } catch (err) {
-      setDataError(err instanceof Error ? err.message : "Could not update balance");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function exportPrivateKey(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setPrivateKey("");
-    setExportError("");
-    setExportStatus("");
-    try {
-      const data = await api<{ privateKey: string }>("/api/wallet/export-key", {
-        password: exportPassword,
-      });
-      setPrivateKey(data.privateKey);
-      setShowPrivateKey(false);
-      setExportStatus("Private key unlocked. Keep it secret.");
-    } catch (err) {
-      setExportError(err instanceof Error ? err.message : "Could not export private key");
-    } finally {
-      setBusy(false);
+      setDataError(err instanceof Error ? err.message : "Could not load wallet balances");
     }
   }
 
@@ -327,23 +286,21 @@ export default function Home() {
     setSendStatus("");
     setSendLink("");
     try {
-      const amountUsd = displayToUsd(amount, displayCurrency);
-      if (bankBalanceUsd < Number(amountUsd)) {
-        throw new Error("Insufficient balance. Add money first.");
+      const amountValue = Number(amount);
+      if (!Number.isFinite(amountValue) || amountValue <= 0) {
+        throw new Error("Enter a dNZD amount greater than 0.");
       }
-      const data =
-        user?.walletKind === "external" && user.linkedWalletAddress
-          ? await sendFromLinkedWallet()
-          : await api<{ fiat: FiatAccount; txHash: string; recipient: { name: string; username: string } }>("/api/app/send", {
-              recipient,
-              amountUsd,
-            });
-      setFiat(data.fiat);
-      setSendStatus(`Sent ${formatCurrency(Number(amount), displayCurrency)} to @${data.recipient.username}.`);
-      setSendLink(`https://sepolia.etherscan.io/tx/${data.txHash}`);
+      if (bankBalanceNzd < amountValue) {
+        throw new Error("Insufficient dNZD balance.");
+      }
+
+      const data = await sendFromLinkedWallet();
+
+      setSendStatus(`Sent ${formatCurrency(amountValue, "NZD")} to @${data.recipient.username}.`);
+      setSendLink(`${BASE_SEPOLIA_EXPLORER}${data.txHash}`);
       setAmount("");
       setRecipient("");
-      await loadTransactions();
+      await Promise.all([loadTransactions(), loadBalances()]);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : "Could not send money");
     } finally {
@@ -361,10 +318,10 @@ export default function Home() {
 
     const prepared = await api<PreparedTransfer>("/api/app/prepare-send", {
       recipient,
-      amountUsd: displayToUsd(amount, displayCurrency),
+      amountNzd: amount,
     });
 
-    await switchToSepolia();
+    await switchToBaseSepolia();
     const provider = new BrowserProvider(window.ethereum);
     const accounts = (await provider.send("eth_requestAccounts", [])) as string[];
     const selected = accounts[0];
@@ -373,52 +330,45 @@ export default function Home() {
     }
 
     const signer = await provider.getSigner();
-    const usdc = new Contract(prepared.token.address, erc20BalanceAbi, signer);
-    const amountRaw = parseUnits(displayToUsd(amount, displayCurrency), prepared.token.decimals);
-    const usdcBalance = (await usdc.balanceOf(selected)) as bigint;
-    const proofAsset = usdcBalance >= amountRaw ? "USDC" : "ETH";
-    if (proofAsset === "ETH") {
-      setSendStatus(
-        `Linked wallet has ${formatUnits(usdcBalance, prepared.token.decimals)} test USDC, so using a tiny Sepolia ETH proof transaction for the demo.`,
-      );
-    }
-    const tx = proofAsset === "USDC"
-      ? await usdc.transfer(prepared.recipientWalletAddress, amountRaw)
-      : await signer.sendTransaction({
-          to: prepared.recipientWalletAddress,
-          value: BigInt(prepared.ethProofWei),
-        });
-    const receipt = await tx.wait();
-    if (!receipt?.hash) {
-      throw new Error("The wallet transaction did not return a Sepolia hash.");
+    const token = new Contract(prepared.token.address, erc20BalanceAbi, signer);
+    const amountRaw = parseUnits(amount, prepared.token.decimals);
+    const tokenBalance = (await token.balanceOf(selected)) as bigint;
+    if (tokenBalance < amountRaw) {
+      throw new Error("Linked wallet does not have enough dNZD for this payment.");
     }
 
-    return api<{ fiat: FiatAccount; txHash: string; recipient: { name: string; username: string } }>("/api/app/record-send", {
+    const tx = await token.transfer(prepared.recipientWalletAddress, amountRaw);
+    const receipt = await tx.wait();
+    if (!receipt?.hash) {
+      throw new Error("The wallet transaction did not return a Base Sepolia hash.");
+    }
+
+    return api<{ txHash: string; recipient: { name: string; username: string } }>("/api/app/record-send", {
       recipient,
-      amountUsd: displayToUsd(amount, displayCurrency),
+      amountNzd: amount,
       txHash: receipt.hash,
-      proofAsset,
+      chainId: prepared.chainId,
     });
   }
 
-  async function switchToSepolia() {
-    const chainId = "0xaa36a7";
+  async function switchToBaseSepolia() {
     try {
-      await window.ethereum.request({
+      await window.ethereum?.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId }],
+        params: [{ chainId: BASE_SEPOLIA_CHAIN_HEX }],
       });
-    } catch (error: any) {
-      if (error?.code !== 4902) throw error;
-      await window.ethereum.request({
+    } catch (error: unknown) {
+      const walletError = error as { code?: number };
+      if (walletError?.code !== 4902) throw error;
+      await window.ethereum?.request({
         method: "wallet_addEthereumChain",
         params: [
           {
-            chainId,
-            chainName: "Sepolia",
-            nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
-            rpcUrls: ["https://ethereum-sepolia.publicnode.com"],
-            blockExplorerUrls: ["https://sepolia.etherscan.io"],
+            chainId: BASE_SEPOLIA_CHAIN_HEX,
+            chainName: "Base Sepolia",
+            nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+            rpcUrls: [BASE_SEPOLIA_RPC_URL],
+            blockExplorerUrls: ["https://sepolia.basescan.org"],
           },
         ],
       });
@@ -429,23 +379,20 @@ export default function Home() {
     await api("/api/auth/logout", {});
     setUser(null);
     setTransactions([]);
-    setFiat(null);
-    setPrivateKey("");
-    setExportPassword("");
+    setBalanceGroups([]);
     setAuthStatus("");
     setSendStatus("");
     setSendLink("");
-    setExportStatus("");
-    setDataStatus("");
     setAuthError("");
     setSendError("");
-    setExportError("");
     setDataError("");
   }
 
-  const bankBalanceUsd = Number(fiat?.balanceUsd || "0");
-  const selectedCurrency = currencyConfig(displayCurrency);
-  const displayedBalance = bankBalanceUsd * selectedCurrency.usdRate;
+  const baseSepoliaAssets = balanceGroups.find((group) => group.chain.id === BASE_SEPOLIA_CHAIN_ID)?.assets || [];
+  const dnzdAsset = baseSepoliaAssets.find((asset) => asset.symbol === "dNZD");
+  const gasAsset = baseSepoliaAssets.find((asset) => asset.symbol === "ETH" && asset.native);
+  const bankBalanceNzd = Number(dnzdAsset?.balance || "0");
+  const gasBalanceEth = gasAsset?.balance || "0";
 
   if (loadingUser) {
     return <main className="center-screen"><Loader2 className="spin" /> Loading wallet...</main>;
@@ -457,10 +404,10 @@ export default function Home() {
         <section className="brand-panel">
           <div className="brand-mark"><Wallet size={30} /></div>
           <h1>PocketRail</h1>
-          <p>A bank-style crypto account that lets people hold USD value and send money to other PocketRail users without seeing wallet complexity.</p>
+          <p>A wallet-connected dNZD account on Base Sepolia for paying other PocketRail users from your linked wallet.</p>
           <div className="proof-row">
             <span><ShieldCheck size={16} /> SQLite user records</span>
-            <span><Check size={16} /> Remembered sessions</span>
+            <span><ShieldCheck size={16} /> Base Sepolia dNZD payments</span>
           </div>
         </section>
 
@@ -503,53 +450,20 @@ export default function Home() {
             </label>
 
             {authMode === "register" && (
-              <fieldset className="wallet-choice">
-                <legend>Wallet setup</legend>
-                <div className="choice-grid">
-                  <label className={form.walletMode === "embedded" ? "choice active" : "choice"}>
-                    <input
-                      type="radio"
-                      name="walletMode"
-                      value="embedded"
-                      checked={form.walletMode === "embedded"}
-                      onChange={() => setForm({ ...form, walletMode: "embedded", walletAddress: "" })}
-                    />
-                    <span>
-                      <strong>Create one for me</strong>
-                      <small>PocketRail creates a hidden wallet for USDC transfers.</small>
-                    </span>
-                  </label>
-                  <label className={form.walletMode === "external" ? "choice active" : "choice"}>
-                    <input
-                      type="radio"
-                      name="walletMode"
-                      value="external"
-                      checked={form.walletMode === "external"}
-                      onChange={() => setForm({ ...form, walletMode: "external" })}
-                    />
-                    <span>
-                      <strong>I have my own wallet</strong>
-                      <small>Link it to your account; PocketRail still creates the transfer wallet.</small>
-                    </span>
-                  </label>
-                </div>
-                {form.walletMode === "external" && (
-                  <div className="stack compact-stack">
-                    <button type="button" className="secondary strong" onClick={connectRegistrationWallet}>
-                      <Wallet size={17} /> Connect wallet
-                    </button>
-                    <label>
-                      Wallet address
-                      <input
-                        value={form.walletAddress}
-                        onChange={(event) => setForm({ ...form, walletAddress: event.target.value })}
-                        placeholder="0x..."
-                        required={form.walletMode === "external"}
-                      />
-                    </label>
-                  </div>
-                )}
-              </fieldset>
+              <div className="stack compact-stack">
+                <button type="button" className="secondary strong" onClick={connectRegistrationWallet}>
+                  <Wallet size={17} /> Connect wallet
+                </button>
+                <label>
+                  Wallet address
+                  <input
+                    value={form.walletAddress}
+                    onChange={(event) => setForm({ ...form, walletAddress: event.target.value })}
+                    placeholder="0x..."
+                    required
+                  />
+                </label>
+              </div>
             )}
 
             {authError && <p className="error">{authError}</p>}
@@ -577,37 +491,20 @@ export default function Home() {
       <section className="money-panel">
         <div className="money-hero">
           <span className="eyebrow">Bank balance</span>
-          <h2>{formatCurrency(displayedBalance, displayCurrency)}</h2>
-          <p>Your app balance is stored as test USD/USDC and shown in your selected currency.</p>
+          <h2>{formatCurrency(bankBalanceNzd, "NZD")}</h2>
+          <p>Your live dNZD balance in your linked wallet on Base Sepolia.</p>
         </div>
         <div className="money-control">
-          <label>
-            Display currency
-            <select value={displayCurrency} onChange={(event) => setDisplayCurrency(event.target.value as DisplayCurrency)}>
-              {displayCurrencies.map((currency) => (
-                <option value={currency.code} key={currency.code}>
-                  {currency.code} - {currency.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {displayCurrency} amount
-            <input value={bankAmount} onChange={(event) => setBankAmount(event.target.value)} inputMode="decimal" placeholder="50.00" />
-          </label>
-          <p className="muted-copy compact-copy">
-            Add test money updates the PocketRail demo ledger only. It does not mint USDC or send funds to a blockchain wallet.
-          </p>
-          <div className="money-actions">
-            <button className="primary" onClick={() => updateTestBalance("top-up")} disabled={busy}>
-              <Check size={17} /> Add test money
-            </button>
-            <button className="secondary strong" onClick={() => updateTestBalance("withdraw")} disabled={busy}>
-              <Wallet size={17} /> Withdraw test money
-            </button>
+          <div className="profile-box">
+            <strong>Base Sepolia wallet</strong>
+            <small>dNZD available: {shortAmount(dnzdAsset?.balance || "0")} dNZD</small>
+            <small>ETH for gas: {shortAmount(gasBalanceEth)} ETH</small>
+            <small>Linked wallet {shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</small>
           </div>
+          <p className="muted-copy compact-copy">
+            dNZD is the payment balance. ETH is only used to cover Base Sepolia gas fees.
+          </p>
           {dataError && <p className="error">{dataError}</p>}
-          {dataStatus && <p className="success">{dataStatus}</p>}
         </div>
       </section>
 
@@ -623,19 +520,19 @@ export default function Home() {
               <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="@username or wallet address" required />
             </label>
             <label>
-              {displayCurrency} amount
+              NZD amount
               <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
             </label>
             {sendError && <p className="error">{sendError}</p>}
             {sendStatus && <p className="success">{sendStatus}</p>}
             {sendLink && (
               <a className="inline-link" href={sendLink} target="_blank" rel="noreferrer">
-                View Sepolia transaction <ExternalLink size={14} />
+                View Base Sepolia transaction <ExternalLink size={14} />
               </a>
             )}
             <button className="primary" disabled={busy}>
               {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-              Send money
+              Send dNZD
             </button>
           </form>
         </section>
@@ -648,69 +545,16 @@ export default function Home() {
             <strong>@{user.username}</strong>
             <span>{user.name}</span>
             <small>{user.email}</small>
-            {user.linkedWalletAddress && (
-              <small>Linked wallet {shortAddress(user.linkedWalletAddress)}</small>
-            )}
+            <small>Linked wallet {shortAddress(user.linkedWalletAddress || user.walletAddress || "")}</small>
           </div>
         </section>
       </section>
 
       <section className="dashboard-grid bottom-grid">
-        {user.hasServerWallet && (
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Export key</h2>
-              <KeyRound size={19} />
-            </div>
-            <form className="stack" onSubmit={exportPrivateKey}>
-              <p className="muted-copy">
-                Export is only available for wallets generated by this app.
-              </p>
-              <label>
-                Confirm password
-                <div className="password-field">
-                  <input
-                    type="password"
-                    value={exportPassword}
-                    onChange={(event) => setExportPassword(event.target.value)}
-                    placeholder="Account password"
-                    required
-                  />
-                  <Lock size={17} className="field-icon" />
-                </div>
-              </label>
-              <button className="secondary strong" disabled={busy}>
-                <KeyRound size={17} /> Unlock private key
-              </button>
-              {exportError && <p className="error">{exportError}</p>}
-              {exportStatus && <p className="success">{exportStatus}</p>}
-              {privateKey && (
-                <div className="key-box">
-                  <div className="panel-head compact">
-                    <strong>Private key</strong>
-                    <button
-                      type="button"
-                      className="icon-button small"
-                      onClick={() => setShowPrivateKey((value) => !value)}
-                      aria-label="Toggle private key visibility"
-                    >
-                      {showPrivateKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                  <code>{showPrivateKey ? privateKey : `${privateKey.slice(0, 10)}${"*".repeat(34)}${privateKey.slice(-6)}`}</code>
-                  <button type="button" className="secondary" onClick={() => navigator.clipboard.writeText(privateKey)}>
-                    <Copy size={17} /> Copy key
-                  </button>
-                </div>
-              )}
-            </form>
-          </section>
-        )}
-
         <section className="panel">
           <div className="panel-head">
             <h2>Transactions</h2>
-            <button className="icon-button" onClick={loadTransactions} aria-label="Refresh transactions">
+            <button className="icon-button" onClick={() => { void loadTransactions(); void loadBalances(); }} aria-label="Refresh transactions">
               <History size={17} />
             </button>
           </div>
@@ -764,25 +608,10 @@ function timeAgo(timestamp: string) {
   return `${days}d ago`;
 }
 
-function formatUsd(value: number) {
-  return formatCurrency(value, "USD");
-}
-
-function formatCurrency(value: number, currency: DisplayCurrency) {
-  const config = currencyConfig(currency);
-  return value.toLocaleString(config.locale, {
+function formatCurrency(value: number, currency: "NZD") {
+  return value.toLocaleString("en-NZ", {
     style: "currency",
     currency,
     maximumFractionDigits: 2,
   });
-}
-
-function displayToUsd(value: string, currency: DisplayCurrency) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return value;
-  return (parsed / currencyConfig(currency).usdRate).toFixed(2);
-}
-
-function currencyConfig(currency: DisplayCurrency) {
-  return displayCurrencies.find((item) => item.code === currency) || displayCurrencies[0];
 }

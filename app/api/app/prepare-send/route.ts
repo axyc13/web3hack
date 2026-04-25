@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
-import { chains } from "@/lib/chains";
-import { findRecipientUser, getFiatAccount, getTransferUserSecrets, usdToCents } from "@/lib/fiat";
+import { chainById } from "@/lib/chains";
+import { findRecipientUser, getTransferUserSecrets, nzdToCents } from "@/lib/fiat";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
   recipient: z.string().min(1),
-  amountUsd: z.string().min(1),
+  amountNzd: z.string().min(1),
 });
 
 export async function POST(request: Request) {
@@ -23,27 +23,22 @@ export async function POST(request: Request) {
       );
     }
 
-    const amountCents = usdToCents(input.amountUsd);
-    const account = getFiatAccount(sender.id);
-    if (account.balanceCents < amountCents) {
-      return NextResponse.json({ error: "Insufficient balance. Add money first." }, { status: 400 });
-    }
+    nzdToCents(input.amountNzd);
 
     const transferSecrets = getTransferUserSecrets(sender.id, recipient.id);
-    const sepolia = chains.find((chain) => chain.id === 11155111);
-    const usdc = sepolia?.tokens.find((token) => token.symbol === "USDC");
-    if (!sepolia || !usdc?.address) {
-      return NextResponse.json({ error: "Sepolia USDC is not configured." }, { status: 400 });
+    const chain = chainById(84532);
+    const token = chain?.tokens.find((item) => item.symbol === "dNZD");
+    if (!chain || !token?.address) {
+      return NextResponse.json({ error: "Base Sepolia dNZD is not configured." }, { status: 400 });
     }
 
     return NextResponse.json({
-      chainId: sepolia.id,
+      chainId: chain.id,
       token: {
-        symbol: usdc.symbol,
-        address: usdc.address,
-        decimals: usdc.decimals,
+        symbol: token.symbol,
+        address: token.address,
+        decimals: token.decimals,
       },
-      ethProofWei: "1000000000000",
       senderWalletAddress: sender.linked_wallet_address || transferSecrets.senderWalletAddress,
       recipientWalletAddress: transferSecrets.recipientWalletAddress,
       recipient: {

@@ -1,19 +1,21 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
-import { findRecipientUser, getTransferUserSecrets, sendToAppUser, usdToCents } from "@/lib/fiat";
-import { sendSepoliaUsdc } from "@/lib/stablecoin";
+import { findRecipientUser } from "@/lib/fiat";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
   recipient: z.string().min(1),
-  amountUsd: z.string().min(1),
+  amountNzd: z.string().min(1),
 });
 
 export async function POST(request: Request) {
   try {
     const sender = await requireUser();
+    if (!sender.linked_wallet_address) {
+      return NextResponse.json({ error: "Connect a linked wallet before sending dNZD." }, { status: 400 });
+    }
     const input = schema.parse(await request.json());
     const recipient = findRecipientUser(input.recipient);
     if (!recipient) {
@@ -22,30 +24,10 @@ export async function POST(request: Request) {
         { status: 404 },
       );
     }
-    const amountCents = usdToCents(input.amountUsd);
-    const transferSecrets = getTransferUserSecrets(sender.id, recipient.id);
-    const txHash = await sendSepoliaUsdc({
-      encryptedPrivateKey: transferSecrets.encryptedPrivateKey,
-      recipientAddress: transferSecrets.recipientWalletAddress,
-      amount: input.amountUsd,
-    });
-
-    const fiat = sendToAppUser({
-      senderUserId: sender.id,
-      recipientUserId: recipient.id,
-      amountCents,
-      txHash,
-    });
-
-    return NextResponse.json({
-      fiat,
-      txHash,
-      recipient: {
-        id: recipient.id,
-        name: recipient.name,
-        username: recipient.username,
-      },
-    });
+    return NextResponse.json(
+      { error: "PocketRail no longer sends from an internal wallet. Sign the dNZD transfer in your linked wallet." },
+      { status: 400 },
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not send money";
     return NextResponse.json({ error: message }, { status: 400 });

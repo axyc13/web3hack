@@ -1,21 +1,25 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
-import { usdToCents, withdrawTestUsd } from "@/lib/fiat";
+import { nzdToCents, usdToCents, withdrawTestNzd, withdrawTestUsd } from "@/lib/fiat";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
   amountUsd: z.string().min(1),
+  currency: z.enum(["USD", "NZD"]).default("USD"),
 });
 
 export async function POST(request: Request) {
   try {
     const user = await requireUser();
     const input = schema.parse(await request.json());
-    return NextResponse.json({ fiat: withdrawTestUsd(user.id, usdToCents(input.amountUsd)) });
+    const fiat = input.currency === "NZD"
+      ? withdrawTestNzd(user.id, nzdToCents(input.amountUsd))
+      : withdrawTestUsd(user.id, usdToCents(input.amountUsd));
+    return NextResponse.json({ fiat });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not withdraw test USD";
+    const message = error instanceof Error ? error.message : "Could not withdraw test balance";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

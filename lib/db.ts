@@ -10,10 +10,11 @@ export type DbUser = {
   password_hash: string;
   wallet_address: string | null;
   linked_wallet_address: string | null;
-  wallet_kind: "external" | "embedded" | null;
+  wallet_kind: "external" | null;
   ens_name: string | null;
   encrypted_private_key: string | null;
   privy_user_id: string | null;
+  nzd_balance_cents: number;
   created_at: string;
 };
 
@@ -38,10 +39,11 @@ export function db() {
         password_hash TEXT NOT NULL,
         wallet_address TEXT,
         linked_wallet_address TEXT,
-        wallet_kind TEXT CHECK(wallet_kind IN ('external', 'embedded')),
+        wallet_kind TEXT CHECK(wallet_kind IN ('external')),
         ens_name TEXT,
         encrypted_private_key TEXT,
         privy_user_id TEXT,
+        nzd_balance_cents INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS sessions (
@@ -77,6 +79,7 @@ export function db() {
         amount_cents INTEGER NOT NULL,
         status TEXT NOT NULL,
         provider TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
         note TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -86,7 +89,7 @@ export function db() {
         sender_user_id INTEGER NOT NULL,
         recipient_user_id INTEGER NOT NULL,
         amount_cents INTEGER NOT NULL,
-        stable_symbol TEXT NOT NULL DEFAULT 'USDC',
+        stable_symbol TEXT NOT NULL DEFAULT 'dNZD',
         tx_hash TEXT,
         chain_id INTEGER NOT NULL DEFAULT 11155111,
         status TEXT NOT NULL,
@@ -115,6 +118,19 @@ function ensureSchema(instance: DatabaseSync) {
   if (!columns.some((column) => column.name === "linked_wallet_address")) {
     instance.exec("ALTER TABLE users ADD COLUMN linked_wallet_address TEXT");
   }
+  if (!columns.some((column) => column.name === "nzd_balance_cents")) {
+    instance.exec("ALTER TABLE users ADD COLUMN nzd_balance_cents INTEGER NOT NULL DEFAULT 0");
+  }
+  instance.exec(`
+    UPDATE users
+    SET wallet_address = COALESCE(linked_wallet_address, wallet_address),
+        linked_wallet_address = COALESCE(linked_wallet_address, wallet_address),
+        wallet_kind = CASE
+          WHEN COALESCE(linked_wallet_address, wallet_address) IS NOT NULL THEN 'external'
+          ELSE wallet_kind
+        END,
+        encrypted_private_key = NULL
+  `);
   const appTransferColumns = instance
     .prepare("PRAGMA table_info(app_transfers)")
     .all() as Array<{ name: string }>;
@@ -123,6 +139,12 @@ function ensureSchema(instance: DatabaseSync) {
   }
   if (!appTransferColumns.some((column) => column.name === "chain_id")) {
     instance.exec("ALTER TABLE app_transfers ADD COLUMN chain_id INTEGER NOT NULL DEFAULT 11155111");
+  }
+  const fiatEventColumns = instance
+    .prepare("PRAGMA table_info(fiat_events)")
+    .all() as Array<{ name: string }>;
+  if (!fiatEventColumns.some((column) => column.name === "currency")) {
+    instance.exec("ALTER TABLE fiat_events ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'");
   }
   const users = instance.prepare("SELECT id, email, username FROM users").all() as Array<{
     id: number;
@@ -152,11 +174,11 @@ export function publicUser(user: DbUser) {
     name: user.name,
     username: user.username,
     email: user.email,
-    walletAddress: user.wallet_address,
-    linkedWalletAddress: user.linked_wallet_address,
+    walletAddress: user.linked_wallet_address || user.wallet_address,
+    linkedWalletAddress: user.linked_wallet_address || user.wallet_address,
     walletKind: user.wallet_kind,
     ensName: user.ens_name,
-    hasServerWallet: Boolean(user.encrypted_private_key) && user.wallet_kind !== "external",
+    hasServerWallet: false,
     privyUserId: user.privy_user_id,
     createdAt: user.created_at,
   };

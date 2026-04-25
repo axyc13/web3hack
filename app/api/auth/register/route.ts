@@ -4,7 +4,6 @@ import { z } from "zod";
 import { createPasswordHash, createSession, userResponse } from "@/lib/auth";
 import { db, DbUser } from "@/lib/db";
 import { resolveEnsName } from "@/lib/ens";
-import { createEmbeddedWallet } from "@/lib/wallet";
 
 export const runtime = "nodejs";
 
@@ -13,8 +12,7 @@ const schema = z.object({
   username: z.string().min(3).max(24).regex(/^[a-zA-Z0-9_]+$/),
   email: z.string().email(),
   password: z.string().min(8),
-  walletMode: z.enum(["external", "embedded"]),
-  walletAddress: z.string().optional(),
+  walletAddress: z.string(),
   privyUserId: z.string().optional(),
 });
 
@@ -28,19 +26,12 @@ export async function POST(request: Request) {
     if (existingUsername) {
       return NextResponse.json({ error: "That username is already taken." }, { status: 409 });
     }
-    const passwordHash = await createPasswordHash(input.password);
-    let linkedWalletAddress: string | null = null;
-    const wallet = createEmbeddedWallet();
-    const walletAddress = wallet.address;
-    const encryptedPrivateKey = wallet.encryptedPrivateKey;
-
-    if (input.walletMode === "external") {
-      if (!input.walletAddress || !isAddress(input.walletAddress)) {
-        return NextResponse.json({ error: "Connect a valid wallet first." }, { status: 400 });
-      }
-      linkedWalletAddress = input.walletAddress;
+    if (!isAddress(input.walletAddress)) {
+      return NextResponse.json({ error: "Connect a valid wallet first." }, { status: 400 });
     }
-    const ensName = await resolveEnsName(linkedWalletAddress || walletAddress);
+    const passwordHash = await createPasswordHash(input.password);
+    const walletAddress = input.walletAddress;
+    const ensName = await resolveEnsName(walletAddress);
 
     const result = db()
       .prepare(
@@ -54,10 +45,10 @@ export async function POST(request: Request) {
         input.email.toLowerCase(),
         passwordHash,
         walletAddress,
-        linkedWalletAddress,
-        input.walletMode,
+        walletAddress,
+        "external",
         ensName,
-        encryptedPrivateKey,
+        null,
         input.privyUserId || null,
       );
 

@@ -81,19 +81,23 @@ function getAppTransfers(userId: number): WalletTransaction[] {
 
   return rows.map((row) => {
     const outgoing = row.sender_user_id === userId;
+    const chain = chains.find((item) => item.id === (row.chain_id || 11155111));
+    const method = row.stable_symbol === "ETH"
+      ? `${chain?.name || "Chain"} ETH proof transfer`
+      : `${chain?.name || "Chain"} ${row.stable_symbol || "dNZD"} transfer`;
     return {
       hash: row.tx_hash || `internal-${row.id}`,
       chainId: row.chain_id || 11155111,
-      chainName: "Sepolia",
-      explorerUrl: row.tx_hash ? `https://sepolia.etherscan.io/tx/${row.tx_hash}` : "",
+      chainName: chain?.name || `Chain ${row.chain_id || 11155111}`,
+      explorerUrl: row.tx_hash && chain ? `${chain.explorer}${row.tx_hash}` : "",
       direction: outgoing ? "outgoing" : "incoming",
       from: `@${row.sender_username}`,
       to: `@${row.recipient_username}`,
       amount: (row.amount_cents / 100).toFixed(2),
-      symbol: row.stable_symbol || "USDC",
+      symbol: row.stable_symbol || "dNZD",
       fee: null,
       status: row.status,
-      method: row.stable_symbol === "ETH" ? "Sepolia ETH proof transfer" : "Sepolia USDC transfer",
+      method,
       timestamp: new Date(`${row.created_at}Z`).toISOString(),
       source: "app",
     };
