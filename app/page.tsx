@@ -1,7 +1,7 @@
 "use client";
 
 import { usePrivy, useSendTransaction, type ConnectedWallet } from "@privy-io/react-auth";
-import { BrowserProvider, Contract, Interface, parseUnits } from "ethers";
+import { BrowserProvider, Contract, Interface, JsonRpcProvider, parseUnits } from "ethers";
 import { useEffect, useRef, useState } from "react";
 import {
   Area,
@@ -12,6 +12,7 @@ import {
   XAxis,
 } from "recharts";
 import { PrivyWalletButton, PrivyWalletStateSync } from "@/components/PrivyWalletButton";
+import { chainById } from "@/lib/chains";
 import { REGION_OPTIONS } from "@/lib/currency";
 import {
   ArrowRight,
@@ -175,6 +176,7 @@ const BASE_SEPOLIA_CHAIN_ID = 84532;
 const BASE_SEPOLIA_EXPLORER = "https://sepolia.basescan.org/tx/";
 const erc20BalanceAbi = [
   "function balanceOf(address owner) view returns (uint256)",
+  "function decimals() view returns (uint8)",
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 const erc20Interface = new Interface(erc20BalanceAbi);
@@ -427,6 +429,35 @@ export default function Home() {
         : { ...current, walletAddress: privyWalletAddress }
     ));
   }, [authMode, privyEthereumWallets]);
+
+  useEffect(() => {
+    if (!user?.id || !user.walletAddress || !privyUserId) return;
+    const privyWalletAddress = privyEthereumWallets.find((wallet) => wallet.walletClientType === "privy")?.address || "";
+    if (!privyWalletAddress) return;
+    if (user.walletAddress.toLowerCase() === privyWalletAddress.toLowerCase()) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await api<{ user: User }>("/api/wallet/sync", {
+          walletAddress: privyWalletAddress,
+          privyUserId,
+        });
+        if (!cancelled) {
+          setUser(data.user);
+          setSelectedWalletAddress(privyWalletAddress);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSendError(err instanceof Error ? err.message : "Could not sync Privy wallet.");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.walletAddress, privyUserId, privyEthereumWallets]);
 
   async function api<T>(url: string, body?: unknown): Promise<T> {
     const res = await fetch(url, {
@@ -820,7 +851,6 @@ export default function Home() {
       throw new Error("Select a wallet to pay from first.");
     }
     const prepared = confirmation.prepared;
-    const amountRaw = parseUnits(confirmation.amountNzd, prepared.token.decimals);
     const privyWallet = privyEthereumWallets.find(
       (wallet) =>
         wallet.walletClientType === "privy"
@@ -830,12 +860,21 @@ export default function Home() {
       throw new Error(`Reconnect ${shortAddress(walletAddress)} with Privy before sending.`);
     }
 
-    const provider = new BrowserProvider(await privyWallet.getEthereumProvider());
-    const token = new Contract(prepared.token.address, erc20BalanceAbi, provider);
-    const tokenBalance = (await token.balanceOf(walletAddress)) as bigint;
-    if (tokenBalance < amountRaw) {
-      throw new Error("Selected wallet does not have enough dNZD for this payment.");
+    const chain = chainById(prepared.chainId);
+    if (!chain) {
+      throw new Error("PocketRail could not resolve the settlement network.");
     }
+
+    const readProvider = new JsonRpcProvider(chain.rpcUrl, chain.id);
+    const readToken = new Contract(prepared.token.address, erc20BalanceAbi, readProvider);
+    const tokenDecimals = Number((await readToken.decimals()) as bigint | number);
+    const amountRaw = parseUnits(confirmation.amountNzd, tokenDecimals);
+    const tokenBalance = (await readToken.balanceOf(walletAddress)) as bigint;
+    if (tokenBalance < amountRaw) {
+      throw new Error("Selected wallet does not have enough dNZD for this payment." + "\n" + "Amount: " + amountRaw + " Token Balance: " + tokenBalance);
+    }
+
+    const provider = new BrowserProvider(await privyWallet.getEthereumProvider());
     const transferData = erc20Interface.encodeFunctionData("transfer", [
       prepared.recipientWalletAddress,
       amountRaw,

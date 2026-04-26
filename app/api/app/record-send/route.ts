@@ -53,10 +53,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Wait for the Base Sepolia transaction to confirm, then try again." }, { status: 400 });
     }
 
-    if (receipt.to?.toLowerCase() !== tokenAddress.toLowerCase()) {
-      return NextResponse.json({ error: "That transaction was not sent to the Base Sepolia dNZD contract." }, { status: 400 });
-    }
-
     const contract = new Contract(tokenAddress, erc20Abi, provider);
     const decimals = Number(await contract.decimals().catch(() => token.decimals));
     const expectedAmount = parseUnits(input.amountNzd, decimals);
