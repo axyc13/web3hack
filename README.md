@@ -70,7 +70,7 @@ SESSION_SECRET
 WALLET_ENCRYPTION_KEY
 ```
 
-`DEPLOY_PATH` is the absolute path to the cloned repo on your server, for example `/home/ubuntu/web3proj`. If it is omitted, the workflow uses `~/web3proj`.
+`DEPLOY_PATH` is the absolute path to the cloned repo on your server, for example `/home/vjam/web3hack`. If it is omitted, the workflow uses `/home/vjam/web3hack`.
 
 The server needs Git and Docker Compose installed. The workflow runs `git pull --ff-only origin main`, `docker compose build --no-cache pocketrail`, and `docker compose up -d --force-recreate pocketrail`. The app is exposed on port `3003`, and SQLite stays in the persistent Docker volume `pocketrail-data`.
 

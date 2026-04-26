@@ -42,22 +42,31 @@ jobs:
           SEPOLIA_USDC_DECIMALS: ${{ secrets.SEPOLIA_USDC_DECIMALS }}
           BANXA_PARTNER_NAME: ${{ secrets.BANXA_PARTNER_NAME }}
           BANXA_ENV: ${{ secrets.BANXA_ENV }}
+          GITHUB_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
-          envs: DEPLOY_PATH,NEXT_PUBLIC_APP_URL,SESSION_SECRET,WALLET_ENCRYPTION_KEY,SEPOLIA_RPC_URL,ETHEREUM_RPC_URL,SEPOLIA_USDC_ADDRESS,SEPOLIA_USDC_DECIMALS,BANXA_PARTNER_NAME,BANXA_ENV
+          envs: DEPLOY_PATH,NEXT_PUBLIC_APP_URL,SESSION_SECRET,WALLET_ENCRYPTION_KEY,SEPOLIA_RPC_URL,ETHEREUM_RPC_URL,SEPOLIA_USDC_ADDRESS,SEPOLIA_USDC_DECIMALS,BANXA_PARTNER_NAME,BANXA_ENV,GITHUB_SHA
           script: |
             set -eu
 
-            APP_DIR="${DEPLOY_PATH:-$HOME/web3proj}"
+            APP_DIR="${DEPLOY_PATH:-/home/vjam/web3hack}"
+            if [ ! -d "$APP_DIR/.git" ]; then
+              echo "Expected a git repo at $APP_DIR, but .git was not found."
+              echo "Set the DEPLOY_PATH GitHub secret to the exact server repo path."
+              exit 1
+            fi
             cd "$APP_DIR"
 
             echo "Deploying repo at $APP_DIR"
+            echo "Before deploy: $(git rev-parse --short HEAD)"
             git fetch origin main
             git checkout main
             git pull --ff-only origin main
+            echo "After deploy: $(git rev-parse --short HEAD)"
+            echo "Expected GitHub commit: ${GITHUB_SHA:-unknown}"
 
             cat > .env <<EOF
             NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3003}
