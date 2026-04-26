@@ -102,6 +102,27 @@ type FxState = {
   preferredCurrency: string;
 };
 
+type FiatAccountState = {
+  balanceCents: number;
+  balanceUsd: string;
+  usdBalanceCents: number;
+  usdBalance: string;
+  nzdBalanceCents: number;
+  nzdBalance: string;
+  events: Array<{
+    id: number;
+    kind: "top_up" | "withdrawal";
+    currency: "USD" | "NZD";
+    amountCents: number;
+    amountUsd: string;
+    amountNzd: string;
+    status: string;
+    provider: string;
+    note: string | null;
+    createdAt: string;
+  }>;
+};
+
 type RecipientScope = "saved_only" | "any_registered";
 
 type AutomationSettings = {
@@ -169,7 +190,17 @@ type AiChatMessage = {
   transferProposal?: AiTransferProposal | null;
 };
 
-type DashboardView = "overview" | "pay" | "activity" | "profile";
+type NewMoneyTopUpResult = {
+  userName: string;
+  walletAddress: string;
+  amount: number;
+  remainingBalance: number | null;
+  message: string;
+  chain: string;
+  bankReference: string;
+};
+
+type DashboardView = "overview" | "pay" | "topup" | "activity" | "profile";
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const BASE_SEPOLIA_EXPLORER = "https://sepolia.basescan.org/tx/";
@@ -181,6 +212,7 @@ const erc20Interface = new Interface(erc20BalanceAbi);
 const DASHBOARD_VIEWS: { id: DashboardView; label: string; hint: string }[] = [
   { id: "overview", label: "Overview", hint: "Balance and shortcuts" },
   { id: "pay", label: "Pay", hint: "Send dNZD" },
+  { id: "topup", label: "Top Up", hint: "Add funds to your account" },
   { id: "activity", label: "Transaction History", hint: "Transactions and settlement" },
 ];
 const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
@@ -210,6 +242,7 @@ export default function Home() {
   const [privyConnectedWallets, setPrivyConnectedWallets] = useState<ConnectedWallet[]>([]);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [balanceGroups, setBalanceGroups] = useState<WalletBalanceGroup[]>([]);
+  const [fiatAccount, setFiatAccount] = useState<FiatAccountState | null>(null);
   const [fx, setFx] = useState<FxState>({ rate: 1, preferredCurrency: "NZD" });
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
@@ -220,6 +253,10 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
   const [sendError, setSendError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [topUpBusy, setTopUpBusy] = useState(false);
+  const [topUpStatus, setTopUpStatus] = useState("");
+  const [topUpError, setTopUpError] = useState("");
+  const [topUpResult, setTopUpResult] = useState<NewMoneyTopUpResult | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [activeView, setActiveView] = useState<DashboardView>("overview");
   const [selectedWalletAddress, setSelectedWalletAddress] = useState("");
@@ -230,6 +267,13 @@ export default function Home() {
     password: "",
     walletAddress: "",
     regionCode: "NZ",
+  });
+  const [topUpForm, setTopUpForm] = useState({
+    accountName: "",
+    accountNumber: "",
+    bankName: "",
+    reference: "PocketRail demo top-up",
+    amountNzd: "100.00",
   });
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
@@ -288,6 +332,14 @@ export default function Home() {
     if (!user) return;
     void loadFx(user.regionCode);
   }, [user?.regionCode]);
+
+  useEffect(() => {
+    if (!user) {
+      setFiatAccount(null);
+      return;
+    }
+    void loadFiat();
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user) {
@@ -502,6 +554,15 @@ export default function Home() {
     }
   }
 
+  async function loadFiat() {
+    try {
+      const data = await api<{ fiat: FiatAccountState }>("/api/fiat");
+      setFiatAccount(data.fiat);
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : "Could not load top-up balance");
+    }
+  }
+
   async function loadFx(regionCode: string) {
     try {
       const data = await api<{ rate: number; preferredCurrency: string }>(`/api/fx?regionCode=${encodeURIComponent(regionCode)}`);
@@ -511,6 +572,29 @@ export default function Home() {
       });
     } catch {
       setFx({ rate: 1, preferredCurrency: "NZD" });
+    }
+  }
+
+  async function submitNewMoneyTopUp() {
+    setTopUpBusy(true);
+    setTopUpError("");
+    setTopUpStatus("");
+    setTopUpResult(null);
+    try {
+      const data = await api<{ fiat: FiatAccountState; newMoney: NewMoneyTopUpResult }>("/api/newmoney/top-up", topUpForm);
+      if (!data.newMoney) {
+        throw new Error("Invalid response from New Money API");
+      }
+      setFiatAccount(data.fiat);
+      setTopUpResult(data.newMoney);
+      setTopUpStatus(
+        `Minted ${formatCurrency(data.newMoney.amount, "NZD", "NZ")} through New Money and credited your demo wallet balance.`,
+      );
+      await Promise.all([loadBalances(), loadTransactions()]);
+    } catch (err) {
+      setTopUpError(err instanceof Error ? err.message : "Could not top up with New Money");
+    } finally {
+      setTopUpBusy(false);
     }
   }
 
@@ -831,6 +915,12 @@ export default function Home() {
     const token = new Contract(prepared.token.address, erc20BalanceAbi, provider);
     const tokenBalance = (await token.balanceOf(walletAddress)) as bigint;
     if (tokenBalance < amountRaw) {
+      if (localDemoBalanceNzd >= confirmation.amountValue) {
+        return api<{ txHash: string; recipient: { name: string; username: string } }>("/api/app/send", {
+          recipient: confirmation.recipientInput,
+          amountNzd: confirmation.amountNzd,
+        });
+      }
       throw new Error("Selected wallet does not have enough dNZD for this payment.");
     }
     const transferData = erc20Interface.encodeFunctionData("transfer", [
@@ -875,7 +965,7 @@ export default function Home() {
       setRecipient("");
       setTransferConfirmation(null);
       setActiveView("activity");
-      await Promise.all([loadTransactions(), loadBalances()]);
+      await Promise.all([loadTransactions(), loadBalances(), loadFiat()]);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not send money";
       setConfirmationError(message);
@@ -890,11 +980,15 @@ export default function Home() {
     setUser(null);
     setTransactions([]);
     setBalanceGroups([]);
+    setFiatAccount(null);
     setAuthStatus("");
     setSendStatus("");
     setSendLink("");
     setAuthError("");
     setSendError("");
+    setTopUpStatus("");
+    setTopUpError("");
+    setTopUpResult(null);
     setDataError("");
     setProfileEditMode(false);
     setContactEditMode(false);
@@ -921,6 +1015,7 @@ export default function Home() {
   const baseSepoliaAssets = balanceGroups.find((group) => group.chain.id === BASE_SEPOLIA_CHAIN_ID)?.assets || [];
   const dnzdAsset = baseSepoliaAssets.find((asset) => asset.symbol === "dNZD");
   const gasAsset = baseSepoliaAssets.find((asset) => asset.symbol === "ETH" && asset.native);
+  const localDemoBalanceNzd = Number(fiatAccount?.nzdBalance || "0");
   const bankBalanceNzd = Number(dnzdAsset?.balance || "0");
   const gasBalanceEth = gasAsset?.balance || "0";
   const userRegionCode = user?.regionCode || "NZ";
@@ -1449,6 +1544,91 @@ export default function Home() {
                   {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
                   Send dNZD
                 </button>
+              </form>
+            </section>
+          </section>
+
+          <section className={activeView === "topup" ? "view-panel active" : "view-panel"} aria-hidden={activeView !== "topup"}>
+            <section className="surface-panel panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">Add funds</p>
+                  <h3>Top up your account</h3>
+                </div>
+                <ArrowUpRight size={20} />
+              </div>
+              <form className="stack">
+                <section className="profile-box compact-box">
+                  <div className="payment-wallet-head">
+                    <span className="section-label">Top up</span>
+                    <ArrowUpRight size={18} />
+                  </div>
+                  <p className="muted-copy compact-copy">
+                    Demo flow: enter bank details, fake the payment, call New Money mint, then credit the amount to this PocketRail wallet for in-app use.
+                  </p>
+                  <div className="stack compact-stack">
+                    <div className="settings-grid">
+                      <label>
+                        Account name
+                        <input
+                          value={topUpForm.accountName}
+                          onChange={(event) => setTopUpForm((current) => ({ ...current, accountName: event.target.value }))}
+                          placeholder="Ada Lovelace"
+                        />
+                      </label>
+                      <label>
+                        Bank name
+                        <input
+                          value={topUpForm.bankName}
+                          onChange={(event) => setTopUpForm((current) => ({ ...current, bankName: event.target.value }))}
+                          placeholder="ANZ"
+                        />
+                      </label>
+                      <label>
+                        Account number
+                        <input
+                          value={topUpForm.accountNumber}
+                          onChange={(event) => setTopUpForm((current) => ({ ...current, accountNumber: event.target.value }))}
+                          placeholder="12-1234-1234567-00"
+                        />
+                      </label>
+                      <label>
+                        Amount (NZD)
+                        <input
+                          value={topUpForm.amountNzd}
+                          onChange={(event) => setTopUpForm((current) => ({ ...current, amountNzd: event.target.value }))}
+                          inputMode="decimal"
+                          placeholder="100.00"
+                        />
+                      </label>
+                    </div>
+                    <label>
+                      Payment reference
+                      <input
+                        value={topUpForm.reference}
+                        onChange={(event) => setTopUpForm((current) => ({ ...current, reference: event.target.value }))}
+                        placeholder="PocketRail demo top-up"
+                      />
+                    </label>
+                    {topUpError && <p className="error">{topUpError}</p>}
+                    {topUpStatus && <p className="success">{topUpStatus}</p>}
+                    {topUpResult && (
+                      <div className="profile-box compact-box">
+                        <strong>{topUpResult.message}</strong>
+                        <small>{topUpResult.userName}</small>
+                        <small>Mint wallet: {shortAddress(topUpResult.walletAddress)}</small>
+                        <small>
+                          Remaining New Money balance: {topUpResult.remainingBalance === null ? "Unknown" : topUpResult.remainingBalance}
+                        </small>
+                        <small>Demo dNZD available in PocketRail: {Number(fiatAccount?.nzdBalance || "0").toFixed(2)}</small>
+                      </div>
+                    )}
+                    <button type="button" className="primary" disabled={topUpBusy} onClick={() => void submitNewMoneyTopUp()}>
+                      {topUpBusy ? <Loader2 className="spin" size={18} /> : <ArrowUpRight size={18} />}
+                      Mint dNZD
+                    </button>
+                  </div>
+                </section>
               </form>
             </section>
           </section>

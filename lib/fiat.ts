@@ -80,6 +80,15 @@ export function topUpTestUsd(userId: number, amountCents: number) {
 }
 
 export function topUpTestNzd(userId: number, amountCents: number) {
+  return creditNzdBalance(userId, amountCents, "Hackathon test NZD balance top-up");
+}
+
+export function creditNzdBalance(
+  userId: number,
+  amountCents: number,
+  note: string,
+  provider = "test-ledger",
+) {
   db()
     .prepare(
       `UPDATE users
@@ -87,7 +96,7 @@ export function topUpTestNzd(userId: number, amountCents: number) {
        WHERE id = ?`,
     )
     .run(amountCents, userId);
-  recordFiatEvent(userId, "top_up", amountCents, "NZD", "Hackathon test NZD balance top-up");
+  recordFiatEvent(userId, "top_up", amountCents, "NZD", note, provider);
   return getFiatAccount(userId);
 }
 
