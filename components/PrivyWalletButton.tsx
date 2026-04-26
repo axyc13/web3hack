@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { KeyRound } from "lucide-react";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 import type { ConnectedWallet } from "@privy-io/react-auth";
 
 type WalletStateInput = {
@@ -13,10 +13,12 @@ type WalletStateInput = {
 export function PrivyWalletButton({
   label,
   onWallet,
+  onError,
   onStateChange,
 }: {
   label?: string;
   onWallet: (address: string) => void;
+  onError?: (message: string) => void;
   onStateChange?: (input: WalletStateInput) => void;
 }) {
   const appId =
@@ -27,6 +29,7 @@ export function PrivyWalletButton({
     <PrivyWalletButtonInner
       label={label}
       onWallet={onWallet}
+      onError={onError}
       onStateChange={onStateChange}
     />
   );
@@ -35,16 +38,20 @@ export function PrivyWalletButton({
 function PrivyWalletButtonInner({
   label,
   onWallet,
+  onError,
   onStateChange,
 }: {
   label?: string;
   onWallet: (address: string) => void;
+  onError?: (message: string) => void;
   onStateChange?: (input: WalletStateInput) => void;
 }) {
-  const { connectOrCreateWallet, ready, user } = usePrivy();
+  const { authenticated, login, ready, user } = usePrivy();
+  const { createWallet } = useCreateWallet();
   const { wallets } = useWallets();
   const selectedWallet = wallets.find((wallet) => wallet.walletClientType === "privy" && wallet.address);
   const onWalletRef = useRef(onWallet);
+  const onErrorRef = useRef(onError);
   const onStateChangeRef = useRef(onStateChange);
 
   useEffect(() => {
@@ -54,6 +61,10 @@ function PrivyWalletButtonInner({
   useEffect(() => {
     onStateChangeRef.current = onStateChange;
   }, [onStateChange]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   useEffect(() => {
     if (selectedWallet?.address) {
@@ -68,12 +79,33 @@ function PrivyWalletButtonInner({
     });
   }, [user?.id, wallets]);
 
+  async function handleClick() {
+    try {
+      if (!ready) return;
+
+      if (!authenticated) {
+        login();
+        return;
+      }
+
+      if (selectedWallet?.address) {
+        onWalletRef.current(selectedWallet.address);
+        return;
+      }
+
+      await createWallet();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not connect Privy wallet";
+      onErrorRef.current?.(message);
+    }
+  }
+
   return (
     <button
       type="button"
       className="secondary"
       disabled={!ready}
-      onClick={() => connectOrCreateWallet()}
+      onClick={() => void handleClick()}
     >
       <KeyRound size={17} /> {label || "Create wallet with email"}
     </button>
