@@ -107,12 +107,12 @@ jobs:
                 image: ${POCKETRAIL_IMAGE}
                 container_name: pocketrail-app
                 ports:
-                  - "3002:3002"
+                  - "3003:3003"
                 environment:
                   NODE_ENV: production
-                  PORT: 3002
+                  PORT: 3003
                   HOSTNAME: 0.0.0.0
-                  NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3002}
+                  NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3003}
                   SESSION_SECRET: ${SESSION_SECRET}
                   WALLET_ENCRYPTION_KEY: ${WALLET_ENCRYPTION_KEY}
                   SEPOLIA_RPC_URL: ${SEPOLIA_RPC_URL:-https://ethereum-sepolia.publicnode.com}

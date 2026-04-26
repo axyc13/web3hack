@@ -33,7 +33,7 @@ Port `3000` was already occupied on this machine, so Next selected `3001`.
 
 ## Docker Deploy
 
-Build and run the production app on port `3002`:
+Build and run the production app on port `3003`:
 
 ```bash
 docker compose up --build -d
@@ -44,7 +44,7 @@ The SQLite database is stored in the named Docker volume `pocketrail-data` mount
 ```bash
 SESSION_SECRET="a-long-random-secret"
 WALLET_ENCRYPTION_KEY="a-long-random-wallet-encryption-secret"
-NEXT_PUBLIC_APP_URL="http://localhost:3002"
+NEXT_PUBLIC_APP_URL="http://localhost:3003"
 ```
 
 Stop the deployment with:
@@ -76,7 +76,7 @@ GHCR_USERNAME
 GHCR_TOKEN
 ```
 
-The server needs Docker Compose installed. The workflow deploys to `~/pocketrail`, exposes the app on port `3002`, and keeps SQLite in the persistent Docker volume `pocketrail-data`.
+The server needs Docker Compose installed. The workflow deploys to `~/pocketrail`, exposes the app on port `3003`, and keeps SQLite in the persistent Docker volume `pocketrail-data`.
 
 ## Environment
 
