@@ -18,8 +18,9 @@ export function PrivyShell({ children }: { children: ReactNode }) {
             theme: "light",
             accentColor: "#2563eb",
             walletChainType: "ethereum-only",
+            loginMessage: "Continue with email to create or reconnect your PocketRail wallet.",
           },
-          loginMethods: ["email", "wallet", "google"],
+          loginMethods: ["email"],
           embeddedWallets: {
             ethereum: {
               createOnLogin: "users-without-wallets",

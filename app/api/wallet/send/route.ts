@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(
-      { error: "PocketRail no longer sends from a server wallet. Sign the transfer in your linked wallet." },
+      { error: "PocketRail no longer sends from a server wallet. Sign the transfer with your Privy wallet." },
       { status: 400 },
     );
   } catch (error) {

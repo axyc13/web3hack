@@ -8,7 +8,7 @@ export async function POST(request: Request) {
     await request.text();
     await requireUser();
     return NextResponse.json(
-      { error: "PocketRail no longer stores an internal wallet. Use your linked wallet in MetaMask." },
+      { error: "Privy wallet export must be started from the profile page in the browser. Use the Export private key for MetaMask action there." },
       { status: 400 },
     );
   } catch (error) {

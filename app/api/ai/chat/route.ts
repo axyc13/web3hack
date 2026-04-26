@@ -62,13 +62,13 @@ export async function POST(request: Request) {
     }
 
     const activeWalletAddress =
-      input.activeWalletAddress || user.linked_wallet_address || user.wallet_address || "";
+      input.activeWalletAddress || user.wallet_address || "";
 
     const tools = [
       {
         type: "function",
         name: "get_account_context",
-        description: "Get PocketRail account context, linked wallet, automation policy, and saved recipients.",
+        description: "Get PocketRail account context, wallet, automation policy, and saved recipients.",
         strict: true,
         parameters: {
           type: "object",
@@ -162,7 +162,7 @@ export async function POST(request: Request) {
               username: user.username,
               regionCode: user.region_code,
               preferredCurrency: user.preferred_currency,
-              linkedWalletAddress: user.linked_wallet_address || user.wallet_address,
+              walletAddress: user.wallet_address,
               activeWalletAddress,
             },
             automation: automation.settings,
