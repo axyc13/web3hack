@@ -55,28 +55,24 @@ docker compose down
 
 ## GitHub Actions Deploy
 
-The workflow in `.github/workflows/deploy.yml` builds the Docker image and pushes it to GitHub Container Registry on every push to `main`.
+The workflow in `.github/workflows/deploy.yml` deploys on every push to `main`. It SSHs into your server, updates the server-side repo, rebuilds Docker with no cache, and recreates the app container.
 
-Optional SSH deployment runs when these repository secrets are set:
+Set these repository secrets:
 
 ```text
 DEPLOY_HOST
 DEPLOY_USER
 DEPLOY_SSH_KEY
 DEPLOY_PORT
+DEPLOY_PATH
 NEXT_PUBLIC_APP_URL
 SESSION_SECRET
 WALLET_ENCRYPTION_KEY
 ```
 
-For private GHCR images, also add:
+`DEPLOY_PATH` is the absolute path to the cloned repo on your server, for example `/home/ubuntu/web3proj`. If it is omitted, the workflow uses `~/web3proj`.
 
-```text
-GHCR_USERNAME
-GHCR_TOKEN
-```
-
-The server needs Docker Compose installed. The workflow deploys to `~/pocketrail`, exposes the app on port `3003`, and keeps SQLite in the persistent Docker volume `pocketrail-data`.
+The server needs Git and Docker Compose installed. The workflow runs `git pull --ff-only origin main`, `docker compose build --no-cache pocketrail`, and `docker compose up -d --force-recreate pocketrail`. The app is exposed on port `3003`, and SQLite stays in the persistent Docker volume `pocketrail-data`.
 
 ## Environment
 
