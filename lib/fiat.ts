@@ -288,10 +288,9 @@ export function findRecipientUser(identifier: string) {
        FROM users
        WHERE lower(username) = lower(?)
           OR lower(wallet_address) = lower(?)
-          OR lower(linked_wallet_address) = lower(?)
        LIMIT 1`,
     )
-    .get(normalizedUsername, value, value) as
+    .get(normalizedUsername, value) as
     | { id: number; name: string; username: string; email: string; wallet_address: string | null }
     | undefined;
   return row || null;
@@ -299,20 +298,20 @@ export function findRecipientUser(identifier: string) {
 
 export function getTransferUserSecrets(senderUserId: number, recipientUserId: number) {
   const sender = db()
-    .prepare("SELECT id, wallet_address, linked_wallet_address FROM users WHERE id = ?")
+    .prepare("SELECT id, wallet_address FROM users WHERE id = ?")
     .get(senderUserId) as
-    | { id: number; wallet_address: string | null; linked_wallet_address: string | null }
+    | { id: number; wallet_address: string | null }
     | undefined;
   const recipient = db()
-    .prepare("SELECT id, wallet_address, linked_wallet_address FROM users WHERE id = ?")
+    .prepare("SELECT id, wallet_address FROM users WHERE id = ?")
     .get(recipientUserId) as
-    | { id: number; wallet_address: string | null; linked_wallet_address: string | null }
+    | { id: number; wallet_address: string | null }
     | undefined;
-  const senderAddress = sender?.linked_wallet_address || sender?.wallet_address;
-  const recipientAddress = recipient?.linked_wallet_address || recipient?.wallet_address;
+  const senderAddress = sender?.wallet_address;
+  const recipientAddress = recipient?.wallet_address;
 
   if (!senderAddress) {
-    throw new Error("Your linked wallet is not available.");
+    throw new Error("Your wallet is not available.");
   }
   if (!recipientAddress) {
     throw new Error("Recipient wallet is not available.");

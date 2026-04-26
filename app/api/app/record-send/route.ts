@@ -21,8 +21,8 @@ const transferInterface = new Interface(["event Transfer(address indexed from, a
 export async function POST(request: Request) {
   try {
     const sender = await requireUser();
-    if (sender.wallet_kind !== "external" || !sender.linked_wallet_address) {
-      return NextResponse.json({ error: "This route is only for linked-wallet transfers." }, { status: 400 });
+    if (!sender.wallet_address) {
+      return NextResponse.json({ error: "Connect a wallet before recording transfers." }, { status: 400 });
     }
 
     const input = schema.parse(await request.json());
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     const contract = new Contract(tokenAddress, erc20Abi, provider);
     const decimals = Number(await contract.decimals().catch(() => token.decimals));
     const expectedAmount = parseUnits(input.amountNzd, decimals);
-    const expectedFrom = zeroPadValue(sender.linked_wallet_address, 32).toLowerCase();
+    const expectedFrom = zeroPadValue(sender.wallet_address, 32).toLowerCase();
     const expectedTo = zeroPadValue(transferSecrets.recipientWalletAddress, 32).toLowerCase();
     const matchingTransfer = receipt.logs.some((log) => {
       if (log.address.toLowerCase() !== tokenAddress.toLowerCase()) return false;

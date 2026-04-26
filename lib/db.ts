@@ -318,12 +318,9 @@ export function publicUser(user: DbUser) {
     username: user.username,
     email: user.email,
     walletAddress: user.wallet_address,
-    linkedWalletAddress: user.linked_wallet_address,
-    walletKind: user.wallet_kind,
     ensName: user.ens_name,
     regionCode: user.region_code,
     preferredCurrency: user.preferred_currency,
-    hasServerWallet: Boolean(user.encrypted_private_key),
     privyUserId: user.privy_user_id,
     createdAt: user.created_at,
   };

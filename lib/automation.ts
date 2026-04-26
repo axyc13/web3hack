@@ -264,7 +264,7 @@ function listSavedRecipients(userId: number) {
          saved_recipients.created_at,
          users.name,
          users.username,
-         COALESCE(users.linked_wallet_address, users.wallet_address) AS wallet_address
+         users.wallet_address AS wallet_address
        FROM saved_recipients
        JOIN users ON users.id = saved_recipients.recipient_user_id
        WHERE saved_recipients.user_id = ?

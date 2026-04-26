@@ -5,7 +5,6 @@ import { createPasswordHash, createSession, userResponse } from "@/lib/auth";
 import { getCurrencyForRegion } from "@/lib/currency";
 import { db, DbUser } from "@/lib/db";
 import { resolveEnsName } from "@/lib/ens";
-import { createEmbeddedWallet } from "@/lib/wallet";
 
 export const runtime = "nodejs";
 
@@ -14,10 +13,9 @@ const schema = z.object({
   username: z.string().min(3).max(24).regex(/^[a-zA-Z0-9_]+$/),
   email: z.string().email(),
   password: z.string().min(8),
-  walletAddress: z.string().optional(),
+  walletAddress: z.string(),
   regionCode: z.enum(["NZ", "AU", "US", "GB", "EU", "SG", "JP"]).default("NZ"),
-  privyUserId: z.string().optional(),
-  walletMode: z.enum(["external", "privy", "generated"]).default("external"),
+  privyUserId: z.string(),
 });
 
 export async function POST(request: Request) {
@@ -31,22 +29,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "That username is already taken." }, { status: 409 });
     }
     const passwordHash = await createPasswordHash(input.password);
-    let walletAddress = input.walletAddress || "";
-    let linkedWalletAddress: string | null = null;
-    let encryptedPrivateKey: string | null = null;
-
-    if (input.walletMode === "generated") {
-      const embeddedWallet = createEmbeddedWallet();
-      walletAddress = embeddedWallet.address;
-      encryptedPrivateKey = embeddedWallet.encryptedPrivateKey;
-    } else {
-      if (!isAddress(walletAddress)) {
-        return NextResponse.json({ error: "Connect a valid wallet first." }, { status: 400 });
-      }
-      linkedWalletAddress = walletAddress;
+    if (!isAddress(input.walletAddress)) {
+      return NextResponse.json({ error: "Create your Privy wallet first." }, { status: 400 });
     }
 
-    const ensName = await resolveEnsName(walletAddress);
+    const ensName = await resolveEnsName(input.walletAddress);
     const preferredCurrency = getCurrencyForRegion(input.regionCode);
 
     const result = db()
@@ -60,12 +47,12 @@ export async function POST(request: Request) {
         username,
         input.email.toLowerCase(),
         passwordHash,
-        walletAddress,
-        linkedWalletAddress,
-        linkedWalletAddress ? "external" : null,
+        input.walletAddress,
+        null,
+        null,
         ensName,
-        encryptedPrivateKey,
-        input.privyUserId || null,
+        null,
+        input.privyUserId,
         input.regionCode,
         preferredCurrency,
       );

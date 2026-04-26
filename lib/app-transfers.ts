@@ -40,7 +40,7 @@ export function prepareAppTransfer(sender: DbUser, recipientInput: string, amoun
       address: token.address,
       decimals: token.decimals,
     },
-    senderWalletAddress: sender.linked_wallet_address || transferSecrets.senderWalletAddress,
+    senderWalletAddress: sender.wallet_address || transferSecrets.senderWalletAddress,
     recipientWalletAddress: transferSecrets.recipientWalletAddress,
     recipient: {
       id: recipient.id,

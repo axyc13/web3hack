@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const user = await requireUser();
-    const address = user.linked_wallet_address || user.wallet_address;
+    const address = user.wallet_address;
     if (!address) {
       return NextResponse.json({ transactions: [] });
     }
