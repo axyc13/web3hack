@@ -1,6 +1,6 @@
 import { chainById } from "./chains";
 import { DbUser } from "./db";
-import { findRecipientUser, getTransferUserSecrets, nzdToCents } from "./fiat";
+import { findRecipientUserByUsername, getTransferUserSecrets, nzdToCents } from "./fiat";
 
 export type AppPreparedTransfer = {
   chainId: number;
@@ -19,9 +19,9 @@ export type AppPreparedTransfer = {
 };
 
 export function prepareAppTransfer(sender: DbUser, recipientInput: string, amountNzd: string): AppPreparedTransfer {
-  const recipient = findRecipientUser(recipientInput);
+  const recipient = findRecipientUserByUsername(recipientInput);
   if (!recipient) {
-    throw new Error("No PocketRail user found for that username or wallet address.");
+    throw new Error("No PocketRail user found for that username.");
   }
 
   nzdToCents(amountNzd);

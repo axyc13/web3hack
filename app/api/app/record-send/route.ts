@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { chainById } from "@/lib/chains";
-import { findRecipientUser, getTransferUserSecrets, nzdToCents, recordAppTransfer } from "@/lib/fiat";
+import { findRecipientUserByUsername, getTransferUserSecrets, nzdToCents, recordAppTransfer } from "@/lib/fiat";
 
 export const runtime = "nodejs";
 
@@ -26,10 +26,10 @@ export async function POST(request: Request) {
     }
 
     const input = schema.parse(await request.json());
-    const recipient = findRecipientUser(input.recipient);
+    const recipient = findRecipientUserByUsername(input.recipient);
     if (!recipient) {
       return NextResponse.json(
-        { error: "No PocketRail user found for that username or wallet address." },
+        { error: "No PocketRail user found for that username." },
         { status: 404 },
       );
     }
