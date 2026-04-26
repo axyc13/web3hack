@@ -1,0 +1,28 @@
+services:
+  pocketrail:
+    image: ${POCKETRAIL_IMAGE:-pocketrail:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pocketrail-app
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3002}
+      SESSION_SECRET: ${SESSION_SECRET:-change-this-session-secret}
+      WALLET_ENCRYPTION_KEY: ${WALLET_ENCRYPTION_KEY:-change-this-wallet-encryption-key}
+      SEPOLIA_RPC_URL: ${SEPOLIA_RPC_URL:-https://ethereum-sepolia.publicnode.com}
+      ETHEREUM_RPC_URL: ${ETHEREUM_RPC_URL:-https://ethereum.publicnode.com}
+      SEPOLIA_USDC_ADDRESS: ${SEPOLIA_USDC_ADDRESS:-0x1c7d4b196cb0c7b01d743Fbc6116a902379C7238}
+      SEPOLIA_USDC_DECIMALS: ${SEPOLIA_USDC_DECIMALS:-6}
+      BANXA_PARTNER_NAME: ${BANXA_PARTNER_NAME:-}
+      BANXA_ENV: ${BANXA_ENV:-sandbox}
+    volumes:
+      - pocketrail-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  pocketrail-data:

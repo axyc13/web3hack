@@ -31,6 +31,53 @@ http://localhost:3001
 
 Port `3000` was already occupied on this machine, so Next selected `3001`.
 
+## Docker Deploy
+
+Build and run the production app on port `3002`:
+
+```bash
+docker compose up --build -d
+```
+
+The SQLite database is stored in the named Docker volume `pocketrail-data` mounted at `/app/data`, so `data/app.sqlite` survives container restarts and image rebuilds. Set real secrets before deploying:
+
+```bash
+SESSION_SECRET="a-long-random-secret"
+WALLET_ENCRYPTION_KEY="a-long-random-wallet-encryption-secret"
+NEXT_PUBLIC_APP_URL="http://localhost:3002"
+```
+
+Stop the deployment with:
+
+```bash
+docker compose down
+```
+
+## GitHub Actions Deploy
+
+The workflow in `.github/workflows/deploy.yml` builds the Docker image and pushes it to GitHub Container Registry on every push to `main`.
+
+Optional SSH deployment runs when these repository secrets are set:
+
+```text
+DEPLOY_HOST
+DEPLOY_USER
+DEPLOY_SSH_KEY
+DEPLOY_PORT
+NEXT_PUBLIC_APP_URL
+SESSION_SECRET
+WALLET_ENCRYPTION_KEY
+```
+
+For private GHCR images, also add:
+
+```text
+GHCR_USERNAME
+GHCR_TOKEN
+```
+
+The server needs Docker Compose installed. The workflow deploys to `~/pocketrail`, exposes the app on port `3002`, and keeps SQLite in the persistent Docker volume `pocketrail-data`.
+
 ## Environment
 
 Copy `.env.example` to `.env` and set these before using anything beyond local demos:
