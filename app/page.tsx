@@ -235,6 +235,7 @@ export default function Home() {
   const [profileStatus, setProfileStatus] = useState("");
   const [profileError, setProfileError] = useState("");
   const [walletExportBusy, setWalletExportBusy] = useState(false);
+  const [walletPanelStatus, setWalletPanelStatus] = useState("");
   const [walletExportError, setWalletExportError] = useState("");
   const [profileEditMode, setProfileEditMode] = useState(false);
   const [contactEditMode, setContactEditMode] = useState(false);
@@ -532,6 +533,7 @@ export default function Home() {
   }
 
   async function exportPrivyWalletToMetaMask() {
+    setWalletPanelStatus("");
     setWalletExportError("");
 
     if (!privyEnabled) {
@@ -552,6 +554,7 @@ export default function Home() {
     setWalletExportBusy(true);
     try {
       await exportWallet({ address: user.walletAddress });
+      setWalletPanelStatus("Privy opened the secure export flow for your PocketRail wallet.");
     } catch (err) {
       setWalletExportError(err instanceof Error ? err.message : "Could not export Privy wallet");
     } finally {
@@ -1558,7 +1561,18 @@ export default function Home() {
                     <p className="eyebrow">Wallet</p>
                     <h3>Privy wallet</h3>
                   </div>
-                  <Wallet size={18} />
+                  <div className="action-list inline-actions">
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={walletExportBusy || !user.walletAddress}
+                      onClick={() => void exportPrivyWalletToMetaMask()}
+                    >
+                      {walletExportBusy ? <Loader2 className="spin" size={18} /> : <ExternalLink size={18} />}
+                      Export private key for MetaMask
+                    </button>
+                    <Wallet size={18} />
+                  </div>
                 </div>
 
                 <div className="profile-box profile-panel">
@@ -1573,27 +1587,7 @@ export default function Home() {
                   <p className="muted-copy compact-copy">
                     To use this wallet in MetaMask, export its private key through Privy and import it into MetaMask as an imported account. This does not export a Secret Recovery Phrase.
                   </p>
-                  <div className="action-list inline-actions">
-                    <PrivyWalletButton
-                      label="Reconnect wallet with email"
-                      onWallet={(address) => {
-                        setSelectedWalletAddress(address);
-                      }}
-                      onStateChange={({ wallets, privyUserId: nextPrivyUserId }) => {
-                        setPrivyConnectedWallets(wallets);
-                        setPrivyUserId(nextPrivyUserId);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={walletExportBusy || !user.walletAddress}
-                      onClick={() => void exportPrivyWalletToMetaMask()}
-                    >
-                      {walletExportBusy ? <Loader2 className="spin" size={18} /> : <ExternalLink size={18} />}
-                      Export private key for MetaMask
-                    </button>
-                  </div>
+                  {walletPanelStatus && <p className="success">{walletPanelStatus}</p>}
                   {walletExportError && <p className="error">{walletExportError}</p>}
                 </div>
 
