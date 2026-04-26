@@ -185,6 +185,10 @@ const erc20BalanceAbi = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 const erc20Interface = new Interface(erc20BalanceAbi);
+const testDnzdMintInterfaces = [
+  new Interface(["function mint(address to, uint256 amount)"]),
+  new Interface(["function mint(uint256 amount)"]),
+];
 const DASHBOARD_VIEWS: { id: DashboardView; label: string; hint: string }[] = [
   { id: "overview", label: "Overview", hint: "Balance and shortcuts" },
   { id: "pay", label: "Pay", hint: "Send dNZD" },
@@ -878,9 +882,20 @@ export default function Home() {
 
     const provider = new BrowserProvider(await privyWallet.getEthereumProvider());
     const token = new Contract(prepared.token.address, erc20BalanceAbi, provider);
-    const tokenBalance = (await token.balanceOf(walletAddress)) as bigint;
+    let tokenBalance = (await token.balanceOf(walletAddress)) as bigint;
     if (tokenBalance < amountRaw) {
-      throw new Error("Selected wallet does not have enough dNZD for this payment.");
+      setSendStatus("Minting test dNZD to your selected wallet...");
+      await mintMissingTestDnzd({
+        walletAddress,
+        tokenAddress: prepared.token.address,
+        chainId: prepared.chainId,
+        missingAmount: amountRaw - tokenBalance,
+        provider,
+      });
+      tokenBalance = (await token.balanceOf(walletAddress)) as bigint;
+    }
+    if (tokenBalance < amountRaw) {
+      throw new Error("Selected wallet still does not have enough test dNZD. Make sure you selected the wallet that can mint or holds the test token.");
     }
     const transferData = erc20Interface.encodeFunctionData("transfer", [
       prepared.recipientWalletAddress,
@@ -904,6 +919,42 @@ export default function Home() {
       txHash: hash,
       chainId: prepared.chainId,
     });
+  }
+
+  async function mintMissingTestDnzd(input: {
+    walletAddress: string;
+    tokenAddress: string;
+    chainId: number;
+    missingAmount: bigint;
+    provider: BrowserProvider;
+  }) {
+    let lastError: unknown = null;
+    for (const mintInterface of testDnzdMintInterfaces) {
+      const fragment = mintInterface.fragments[0];
+      const data = fragment.inputs.length === 2
+        ? mintInterface.encodeFunctionData("mint(address,uint256)", [input.walletAddress, input.missingAmount])
+        : mintInterface.encodeFunctionData("mint(uint256)", [input.missingAmount]);
+      try {
+        const { hash } = await sendPrivyTransaction(
+          {
+            to: input.tokenAddress,
+            data,
+            chainId: input.chainId,
+          },
+          {
+            address: input.walletAddress,
+            sponsor: true,
+          },
+        );
+        await input.provider.waitForTransaction(hash, 1);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    const message = lastError instanceof Error ? lastError.message : "Mint transaction failed.";
+    throw new Error(`Could not mint test dNZD to the selected wallet. ${message}`);
   }
 
   async function confirmTransfer() {
