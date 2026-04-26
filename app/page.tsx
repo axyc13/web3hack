@@ -1029,7 +1029,7 @@ export default function Home() {
           </div>
           <div className="hero-copy">
             <p className="eyebrow soft">Wallet-connected payments</p>
-            <h1>Send stablecoin transfers through an app that feels familiar.</h1>
+            <h1>Send stablecoinn transfers through an app that feels familiar.</h1>
             <p className="lead-copy">
               PocketRail gives your crypto payment flow a cleaner bank-like front end, while settlement still happens onchain in dNZD.
             </p>
