@@ -91,6 +91,7 @@ export async function sendFromEmbeddedWallet(input: {
       to: input.recipient,
       value: parseUnits(input.amount, chain.native.decimals),
     });
+    await tx.wait();
     return tx.hash;
   }
 
@@ -101,5 +102,6 @@ export async function sendFromEmbeddedWallet(input: {
 
   const contract = new Contract(token.address, erc20Abi, wallet);
   const tx = await contract.transfer(input.recipient, parseUnits(input.amount, token.decimals));
+  await tx.wait();
   return tx.hash as string;
 }

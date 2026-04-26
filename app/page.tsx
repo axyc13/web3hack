@@ -1,5 +1,6 @@
 "use client";
 
+import type { ConnectedWallet } from "@privy-io/react-auth";
 import { BrowserProvider, Contract, parseUnits } from "ethers";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -10,6 +11,7 @@ import {
   Tooltip,
   XAxis,
 } from "recharts";
+import { PrivyWalletButton } from "@/components/PrivyWalletButton";
 import { REGION_OPTIONS } from "@/lib/currency";
 import {
   ArrowRight,
@@ -38,10 +40,12 @@ type User = {
   email: string;
   walletAddress: string | null;
   linkedWalletAddress: string | null;
-  walletKind: "external" | null;
+  walletKind: "external" | "privy" | null;
   ensName: string | null;
   regionCode: string;
   preferredCurrency: string;
+  hasServerWallet: boolean;
+  privyUserId?: string | null;
 };
 
 type WalletTransaction = {
@@ -149,6 +153,8 @@ type WalletFormState = {
   walletAddress: string;
 };
 
+type RegistrationWalletMode = "external" | "privy";
+
 type TransferConfirmation = {
   source: "manual" | "ai";
   amountNzd: string;
@@ -200,9 +206,13 @@ const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
 };
 
 export default function Home() {
+  const privyEnabled = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID || process.env.VITE_PRIVY_APP_ID);
   const [user, setUser] = useState<User | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [authMode, setAuthMode] = useState<"login" | "register">("register");
+  const [registrationWalletMode, setRegistrationWalletMode] = useState<RegistrationWalletMode>("privy");
+  const [privyUserId, setPrivyUserId] = useState<string | null>(null);
+  const [privyConnectedWallets, setPrivyConnectedWallets] = useState<ConnectedWallet[]>([]);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [balanceGroups, setBalanceGroups] = useState<WalletBalanceGroup[]>([]);
   const [fx, setFx] = useState<FxState>({ rate: 1, preferredCurrency: "NZD" });
@@ -268,6 +278,7 @@ export default function Home() {
     available: boolean;
     message: string;
   }>({ checking: false, available: false, message: "" });
+  const privyEthereumWallets = privyConnectedWallets.filter((wallet) => wallet.type === "ethereum");
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -341,7 +352,7 @@ export default function Home() {
     if (!selectedWalletAddress && walletOptions.length > 0) {
       setSelectedWalletAddress(walletOptions[0]);
     }
-  }, [selectedWalletAddress, user?.linkedWalletAddress, user?.walletAddress, availableWallets]);
+  }, [selectedWalletAddress, user?.linkedWalletAddress, user?.walletAddress, availableWallets, privyEthereumWallets]);
 
   useEffect(() => {
     if (!user?.walletAddress) return;
@@ -427,6 +438,17 @@ export default function Home() {
     };
   }, [authMode, form.username]);
 
+  useEffect(() => {
+    if (authMode !== "register" || registrationWalletMode !== "privy") return;
+    const privyWalletAddress = privyEthereumWallets[0]?.address || "";
+    if (!privyWalletAddress) return;
+    setForm((current) => (
+      current.walletAddress.toLowerCase() === privyWalletAddress.toLowerCase()
+        ? current
+        : { ...current, walletAddress: privyWalletAddress }
+    ));
+  }, [authMode, registrationWalletMode, privyEthereumWallets]);
+
   async function api<T>(url: string, body?: unknown): Promise<T> {
     const res = await fetch(url, {
       method: body ? "POST" : "GET",
@@ -453,9 +475,25 @@ export default function Home() {
       if (authMode === "register" && !usernameState.available) {
         throw new Error(usernameState.message || "Choose a unique username first.");
       }
+      if (
+        authMode === "register"
+        && ((registrationWalletMode === "external") || (registrationWalletMode === "privy" && privyEnabled))
+        && !form.walletAddress
+      ) {
+        throw new Error("Connect or create a wallet first.");
+      }
       const payload = authMode === "login"
         ? { email: form.email, password: form.password }
-        : form;
+        : {
+            ...form,
+            privyUserId: registrationWalletMode === "privy" ? privyUserId || undefined : undefined,
+            walletMode:
+              registrationWalletMode === "external"
+                ? "external"
+                : privyEnabled
+                  ? "privy"
+                  : "generated",
+          };
       const data = await api<{ user: User }>(
         authMode === "login" ? "/api/auth/login" : "/api/auth/register",
         payload,
@@ -468,6 +506,16 @@ export default function Home() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function chooseRegistrationWallet(mode: RegistrationWalletMode) {
+    setRegistrationWalletMode(mode);
+    setAuthError("");
+    setAuthStatus("");
+    setForm((current) => ({
+      ...current,
+      walletAddress: mode === "privy" ? privyEthereumWallets[0]?.address || "" : "",
+    }));
   }
 
   async function connectRegistrationWallet() {
@@ -847,25 +895,53 @@ export default function Home() {
     if (!walletAddress) {
       throw new Error("Select a wallet to pay from first.");
     }
-    if (!window.ethereum?.request) {
-      throw new Error("No browser wallet found. Open this app in a wallet browser or install MetaMask.");
+    const usingGeneratedWallet =
+      Boolean(user?.hasServerWallet)
+      && Boolean(user?.walletAddress)
+      && user?.walletAddress?.toLowerCase() === walletAddress.toLowerCase()
+      && (!user?.linkedWalletAddress || user.linkedWalletAddress.toLowerCase() !== walletAddress.toLowerCase());
+
+    if (usingGeneratedWallet) {
+      return api<{ txHash: string; recipient: { name: string; username: string } }>("/api/app/send", {
+        recipient: confirmation.recipientInput,
+        amountNzd: confirmation.amountNzd,
+      });
     }
+
     const prepared = confirmation.prepared;
+    const privyWallet = privyEthereumWallets.find((wallet) => wallet.address.toLowerCase() === walletAddress.toLowerCase());
 
-    await switchToBaseSepolia();
-    const provider = new BrowserProvider(window.ethereum);
-    const accounts = (await provider.send("eth_requestAccounts", [])) as string[];
-    const selected = accounts.find((account) => account.toLowerCase() === walletAddress.toLowerCase());
-    if (!selected) {
-      throw new Error(`Connect or switch to ${shortAddress(walletAddress)} in your browser wallet first.`);
+    let signerAddress = walletAddress;
+    let signer;
+
+    if (privyWallet) {
+      await privyWallet.switchChain(BASE_SEPOLIA_CHAIN_ID);
+      const provider = new BrowserProvider(await privyWallet.getEthereumProvider());
+      signer = await provider.getSigner();
+      signerAddress = await signer.getAddress();
+      if (signerAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+        throw new Error(`Reconnect ${shortAddress(walletAddress)} with Privy before sending.`);
+      }
+    } else {
+      if (!window.ethereum?.request) {
+        throw new Error("No browser wallet found. Open this app in a wallet browser, install MetaMask, or reconnect your Privy wallet.");
+      }
+      await switchToBaseSepolia();
+      const provider = new BrowserProvider(window.ethereum);
+      const accounts = (await provider.send("eth_requestAccounts", [])) as string[];
+      const selected = accounts.find((account) => account.toLowerCase() === walletAddress.toLowerCase());
+      if (!selected) {
+        throw new Error(`Connect or switch to ${shortAddress(walletAddress)} in your browser wallet first.`);
+      }
+      signer = await provider.getSigner(selected);
+      signerAddress = selected;
     }
 
-    const signer = await provider.getSigner(selected);
     const token = new Contract(prepared.token.address, erc20BalanceAbi, signer);
     const amountRaw = parseUnits(confirmation.amountNzd, prepared.token.decimals);
-    const tokenBalance = (await token.balanceOf(selected)) as bigint;
+    const tokenBalance = (await token.balanceOf(signerAddress)) as bigint;
     if (tokenBalance < amountRaw) {
-      throw new Error("Linked wallet does not have enough dNZD for this payment.");
+      throw new Error("Selected wallet does not have enough dNZD for this payment.");
     }
 
     const tx = await token.transfer(prepared.recipientWalletAddress, amountRaw);
@@ -983,6 +1059,7 @@ export default function Home() {
     user?.linkedWalletAddress || "",
     user?.walletAddress || "",
     ...availableWallets,
+    ...privyEthereumWallets.map((wallet) => wallet.address),
   ]);
   const activePaymentWallet = selectedWalletAddress || walletOptions[0] || "";
   const sendAmountValue = Number(amount);
@@ -1007,6 +1084,13 @@ export default function Home() {
   const confirmationDisplayAmount = transferConfirmation
     ? transferConfirmation.amountValue * (fx.rate || 1)
     : 0;
+  const confirmationUsesGeneratedWallet = Boolean(
+    transferConfirmation
+    && user?.hasServerWallet
+    && user?.walletAddress
+    && transferConfirmation.fromWalletAddress.toLowerCase() === user.walletAddress.toLowerCase()
+    && (!user.linkedWalletAddress || user.linkedWalletAddress.toLowerCase() !== transferConfirmation.fromWalletAddress.toLowerCase()),
+  );
 
   if (loadingUser) {
     return (
@@ -1080,8 +1164,8 @@ export default function Home() {
               <h2>{authMode === "register" ? "Create your account" : "Welcome back"}</h2>
             </div>
             <div className="segmented">
-              <button className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Register</button>
-              <button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Log in</button>
+              <button type="button" className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>Register</button>
+              <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>Log in</button>
             </div>
           </div>
 
@@ -1142,16 +1226,59 @@ export default function Home() {
 
             {authMode === "register" && (
               <div className="stack compact-stack">
-                <button type="button" className="secondary strong" onClick={connectRegistrationWallet}>
-                  <Wallet size={17} /> Connect wallet
-                </button>
+                <div className="segmented">
+                  <button
+                    type="button"
+                    className={registrationWalletMode === "privy" ? "active" : ""}
+                    onClick={() => chooseRegistrationWallet("privy")}
+                  >
+                    {privyEnabled ? "Privy wallet" : "Auto wallet"}
+                  </button>
+                  <button
+                    type="button"
+                    className={registrationWalletMode === "external" ? "active" : ""}
+                    onClick={() => chooseRegistrationWallet("external")}
+                  >
+                    External wallet
+                  </button>
+                </div>
+                {registrationWalletMode === "privy" ? (
+                  <>
+                    {privyEnabled ? (
+                      <>
+                        <PrivyWalletButton
+                          onWallet={(address) => {
+                            setAuthError("");
+                            setForm((current) => ({ ...current, walletAddress: address }));
+                          }}
+                          onStateChange={({ wallets, privyUserId: nextPrivyUserId }) => {
+                            setPrivyConnectedWallets(wallets);
+                            setPrivyUserId(nextPrivyUserId);
+                          }}
+                        />
+                        <p className="field-hint">
+                          No existing wallet needed. Privy will create one for this account that can receive and send money once connected.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="field-hint">
+                        PocketRail will generate a wallet automatically when you create your account. You can use it to receive and send money inside the app.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <button type="button" className="secondary strong" onClick={connectRegistrationWallet}>
+                    <Wallet size={17} /> Connect wallet
+                  </button>
+                )}
                 <label>
-                  Wallet address
+                  {registrationWalletMode === "privy" ? (privyEnabled ? "Privy wallet address" : "Generated wallet address") : "Wallet address"}
                   <input
                     value={form.walletAddress}
                     onChange={(event) => setForm({ ...form, walletAddress: event.target.value })}
-                    placeholder="0x..."
-                    required
+                    placeholder={registrationWalletMode === "privy" && !privyEnabled ? "Generated when account is created" : "0x..."}
+                    required={registrationWalletMode === "external" || (registrationWalletMode === "privy" && privyEnabled)}
+                    readOnly={registrationWalletMode === "privy"}
                   />
                 </label>
               </div>
@@ -1996,7 +2123,9 @@ export default function Home() {
             </div>
 
             <p className="muted-copy">
-              PocketRail will ask your linked wallet to sign this transfer after you confirm. This review step is shown for both manual and AI-assisted payments.
+              {confirmationUsesGeneratedWallet
+                ? "PocketRail will send this transfer from your generated app wallet after you confirm."
+                : "PocketRail will ask your linked wallet to sign this transfer after you confirm."} This review step is shown for both manual and AI-assisted payments.
             </p>
 
             {confirmationError && <p className="error">{confirmationError}</p>}
@@ -2081,6 +2210,14 @@ function walletLabel(walletAddress: string, user: User) {
   }
   if (user.walletAddress && walletAddress.toLowerCase() === user.walletAddress.toLowerCase()) {
     labels.push("Account");
+  }
+  if (
+    user.hasServerWallet
+    && user.walletAddress
+    && walletAddress.toLowerCase() === user.walletAddress.toLowerCase()
+    && (!user.linkedWalletAddress || user.linkedWalletAddress.toLowerCase() !== walletAddress.toLowerCase())
+  ) {
+    labels.push("PocketRail");
   }
 
   return labels.join(" · ");

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
-import { findRecipientUser } from "@/lib/fiat";
+import { nzdToCents, recordAppTransfer } from "@/lib/fiat";
+import { prepareAppTransfer } from "@/lib/app-transfers";
+import { sendFromEmbeddedWallet } from "@/lib/wallet";
 
 export const runtime = "nodejs";
 
@@ -13,23 +15,37 @@ const schema = z.object({
 export async function POST(request: Request) {
   try {
     const sender = await requireUser();
-    if (!sender.linked_wallet_address) {
-      return NextResponse.json({ error: "Connect a linked wallet before sending dNZD." }, { status: 400 });
+    if (!sender.encrypted_private_key || !sender.wallet_address) {
+      return NextResponse.json({ error: "Create an automatic PocketRail wallet before sending dNZD." }, { status: 400 });
     }
+
     const input = schema.parse(await request.json());
-    const recipient = findRecipientUser(input.recipient);
-    if (!recipient) {
-      return NextResponse.json(
-        { error: "No PocketRail user found for that username or wallet address." },
-        { status: 404 },
-      );
-    }
-    return NextResponse.json(
-      { error: "PocketRail no longer sends from an internal wallet. Sign the dNZD transfer in your linked wallet." },
-      { status: 400 },
-    );
+    const prepared = prepareAppTransfer(sender, input.recipient, input.amountNzd);
+    const txHash = await sendFromEmbeddedWallet({
+      encryptedPrivateKey: sender.encrypted_private_key,
+      chainId: prepared.chainId,
+      recipient: prepared.recipientWalletAddress,
+      amount: input.amountNzd,
+      symbol: prepared.token.symbol,
+    });
+
+    recordAppTransfer({
+      senderUserId: sender.id,
+      recipientUserId: prepared.recipient.id,
+      amountCents: nzdToCents(input.amountNzd),
+      txHash,
+      stableSymbol: prepared.token.symbol,
+      chainId: prepared.chainId,
+      note: `PocketRail generated wallet transfer ${txHash}`,
+    });
+
+    return NextResponse.json({
+      txHash,
+      recipient: prepared.recipient,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not send money";
-    return NextResponse.json({ error: message }, { status: 400 });
+    const status = message.includes("No PocketRail user found") ? 404 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }
