@@ -176,13 +176,15 @@ function ensureSchema(instance: DatabaseSync) {
   }
   instance.exec(`
     UPDATE users
-    SET wallet_address = COALESCE(linked_wallet_address, wallet_address),
-        linked_wallet_address = COALESCE(linked_wallet_address, wallet_address),
+    SET wallet_address = COALESCE(wallet_address, linked_wallet_address),
+        linked_wallet_address = CASE
+          WHEN encrypted_private_key IS NULL THEN COALESCE(linked_wallet_address, wallet_address)
+          ELSE linked_wallet_address
+        END,
         wallet_kind = CASE
-          WHEN COALESCE(linked_wallet_address, wallet_address) IS NOT NULL THEN 'external'
+          WHEN encrypted_private_key IS NULL AND COALESCE(linked_wallet_address, wallet_address) IS NOT NULL THEN 'external'
           ELSE wallet_kind
         END,
-        encrypted_private_key = NULL,
         region_code = COALESCE(NULLIF(region_code, ''), 'NZ'),
         preferred_currency = CASE
           WHEN preferred_currency IS NOT NULL AND preferred_currency != '' THEN preferred_currency
@@ -315,13 +317,13 @@ export function publicUser(user: DbUser) {
     name: user.name,
     username: user.username,
     email: user.email,
-    walletAddress: user.linked_wallet_address || user.wallet_address,
-    linkedWalletAddress: user.linked_wallet_address || user.wallet_address,
+    walletAddress: user.wallet_address,
+    linkedWalletAddress: user.linked_wallet_address,
     walletKind: user.wallet_kind,
     ensName: user.ens_name,
     regionCode: user.region_code,
     preferredCurrency: user.preferred_currency,
-    hasServerWallet: false,
+    hasServerWallet: Boolean(user.encrypted_private_key),
     privyUserId: user.privy_user_id,
     createdAt: user.created_at,
   };
