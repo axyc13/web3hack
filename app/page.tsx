@@ -1,7 +1,7 @@
 "use client";
 
 import { usePrivy, useSendTransaction, type ConnectedWallet } from "@privy-io/react-auth";
-import { BrowserProvider, Contract, Interface, parseUnits } from "ethers";
+import { BrowserProvider, Contract, Interface, JsonRpcProvider, parseUnits } from "ethers";
 import { useEffect, useRef, useState } from "react";
 import {
   Area,
@@ -12,6 +12,7 @@ import {
   XAxis,
 } from "recharts";
 import { PrivyWalletButton, PrivyWalletStateSync } from "@/components/PrivyWalletButton";
+import { chainById } from "@/lib/chains";
 import { REGION_OPTIONS } from "@/lib/currency";
 import {
   ArrowRight,
@@ -213,6 +214,7 @@ const BASE_SEPOLIA_CHAIN_ID = 84532;
 const BASE_SEPOLIA_EXPLORER = "https://sepolia.basescan.org/tx/";
 const erc20BalanceAbi = [
   "function balanceOf(address owner) view returns (uint256)",
+  "function decimals() view returns (uint8)",
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 const erc20Interface = new Interface(erc20BalanceAbi);
@@ -288,6 +290,7 @@ export default function Home() {
   const [profileStatus, setProfileStatus] = useState("");
   const [profileError, setProfileError] = useState("");
   const [walletExportBusy, setWalletExportBusy] = useState(false);
+  const [walletPanelStatus, setWalletPanelStatus] = useState("");
   const [walletExportError, setWalletExportError] = useState("");
   const [profileEditMode, setProfileEditMode] = useState(false);
   const [contactEditMode, setContactEditMode] = useState(false);
@@ -528,6 +531,35 @@ export default function Home() {
     ));
   }, [authMode, privyEthereumWallets]);
 
+  useEffect(() => {
+    if (!user?.id || !user.walletAddress || !privyUserId) return;
+    const privyWalletAddress = privyEthereumWallets.find((wallet) => wallet.walletClientType === "privy")?.address || "";
+    if (!privyWalletAddress) return;
+    if (user.walletAddress.toLowerCase() === privyWalletAddress.toLowerCase()) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await api<{ user: User }>("/api/wallet/sync", {
+          walletAddress: privyWalletAddress,
+          privyUserId,
+        });
+        if (!cancelled) {
+          setUser(data.user);
+          setSelectedWalletAddress(privyWalletAddress);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSendError(err instanceof Error ? err.message : "Could not sync Privy wallet.");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.walletAddress, privyUserId, privyEthereumWallets]);
+
   async function api<T>(url: string, body?: unknown): Promise<T> {
     const res = await fetch(url, {
       method: body ? "POST" : "GET",
@@ -665,6 +697,7 @@ export default function Home() {
   }
 
   async function exportPrivyWalletToMetaMask() {
+    setWalletPanelStatus("");
     setWalletExportError("");
 
     if (!privyEnabled) {
@@ -685,6 +718,7 @@ export default function Home() {
     setWalletExportBusy(true);
     try {
       await exportWallet({ address: user.walletAddress });
+      setWalletPanelStatus("Privy opened the secure export flow for your PocketRail wallet.");
     } catch (err) {
       setWalletExportError(err instanceof Error ? err.message : "Could not export Privy wallet");
     } finally {
@@ -950,7 +984,6 @@ export default function Home() {
       throw new Error("Select a wallet to pay from first.");
     }
     const prepared = confirmation.prepared;
-    const amountRaw = parseUnits(confirmation.amountNzd, prepared.token.decimals);
     const privyWallet = privyEthereumWallets.find(
       (wallet) =>
         wallet.walletClientType === "privy"
@@ -960,9 +993,16 @@ export default function Home() {
       throw new Error(`Reconnect ${shortAddress(walletAddress)} with Privy before sending.`);
     }
 
-    const provider = new BrowserProvider(await privyWallet.getEthereumProvider());
-    const token = new Contract(prepared.token.address, erc20BalanceAbi, provider);
-    const tokenBalance = (await token.balanceOf(walletAddress)) as bigint;
+    const chain = chainById(prepared.chainId);
+    if (!chain) {
+      throw new Error("PocketRail could not resolve the settlement network.");
+    }
+
+    const readProvider = new JsonRpcProvider(chain.rpcUrl, chain.id);
+    const readToken = new Contract(prepared.token.address, erc20BalanceAbi, readProvider);
+    const tokenDecimals = Number((await readToken.decimals()) as bigint | number);
+    const amountRaw = parseUnits(confirmation.amountNzd, tokenDecimals);
+    const tokenBalance = (await readToken.balanceOf(walletAddress)) as bigint;
     if (tokenBalance < amountRaw) {
       if (localDemoBalanceNzd >= confirmation.amountValue) {
         return api<{ txHash: string; recipient: { name: string; username: string } }>("/api/app/send", {
@@ -970,8 +1010,10 @@ export default function Home() {
           amountNzd: confirmation.amountNzd,
         });
       }
-      throw new Error("Selected wallet does not have enough dNZD for this payment.");
+      throw new Error("Selected wallet does not have enough dNZD for this payment." + "\n" + "Amount: " + amountRaw + " Token Balance: " + tokenBalance);
     }
+
+    const provider = new BrowserProvider(await privyWallet.getEthereumProvider());
     const transferData = erc20Interface.encodeFunctionData("transfer", [
       prepared.recipientWalletAddress,
       amountRaw,
@@ -1175,20 +1217,6 @@ export default function Home() {
               <p>Profile, activity, and send flow stay connected in a single experience.</p>
             </article>
           </div>
-          <div className="showcase-metrics">
-            <div>
-              <strong>dNZD</strong>
-              <span>Settlement asset</span>
-            </div>
-            <div>
-              <strong>Base</strong>
-              <span>Sepolia testnet</span>
-            </div>
-            <div>
-              <strong>Live FX</strong>
-              <span>Localized display</span>
-            </div>
-          </div>
         </section>
 
         <section className="auth-card surface-panel">
@@ -1266,7 +1294,7 @@ export default function Home() {
                   </p>
                 )}
                 <PrivyWalletButton
-                  label="Create wallet with email"
+                  label="Create your PocketRail wallet"
                   onWallet={(address) => {
                     setAuthError("");
                     setForm((current) => ({ ...current, walletAddress: address }));
@@ -1279,16 +1307,6 @@ export default function Home() {
                 <p className="field-hint">
                   Every PocketRail account uses an automatically generated Privy wallet. We create and reconnect it through your email login so dNZD sends can use sponsored gas.
                 </p>
-                <label>
-                  Privy wallet address
-                  <input
-                    value={form.walletAddress}
-                    onChange={(event) => setForm({ ...form, walletAddress: event.target.value })}
-                    placeholder="0x..."
-                    required
-                    readOnly
-                  />
-                </label>
               </div>
             )}
 
@@ -1821,7 +1839,18 @@ export default function Home() {
                     <p className="eyebrow">Wallet</p>
                     <h3>Privy wallet</h3>
                   </div>
-                  <Wallet size={18} />
+                  <div className="action-list inline-actions">
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={walletExportBusy || !user.walletAddress}
+                      onClick={() => void exportPrivyWalletToMetaMask()}
+                    >
+                      {walletExportBusy ? <Loader2 className="spin" size={18} /> : <ExternalLink size={18} />}
+                      Export private key for MetaMask
+                    </button>
+                    <Wallet size={18} />
+                  </div>
                 </div>
 
                 <div className="profile-box profile-panel">
@@ -1836,27 +1865,7 @@ export default function Home() {
                   <p className="muted-copy compact-copy">
                     To use this wallet in MetaMask, export its private key through Privy and import it into MetaMask as an imported account. This does not export a Secret Recovery Phrase.
                   </p>
-                  <div className="action-list inline-actions">
-                    <PrivyWalletButton
-                      label="Reconnect wallet with email"
-                      onWallet={(address) => {
-                        setSelectedWalletAddress(address);
-                      }}
-                      onStateChange={({ wallets, privyUserId: nextPrivyUserId }) => {
-                        setPrivyConnectedWallets(wallets);
-                        setPrivyUserId(nextPrivyUserId);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={walletExportBusy || !user.walletAddress}
-                      onClick={() => void exportPrivyWalletToMetaMask()}
-                    >
-                      {walletExportBusy ? <Loader2 className="spin" size={18} /> : <ExternalLink size={18} />}
-                      Export private key for MetaMask
-                    </button>
-                  </div>
+                  {walletPanelStatus && <p className="success">{walletPanelStatus}</p>}
                   {walletExportError && <p className="error">{walletExportError}</p>}
                 </div>
 
