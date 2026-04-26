@@ -305,6 +305,25 @@ export function findRecipientUser(identifier: string) {
   return row || null;
 }
 
+export function findRecipientUserByUsername(identifier: string) {
+  const value = identifier.trim();
+  if (!value) return null;
+  const normalizedUsername = value.startsWith("@") ? value.slice(1) : value;
+  if (!/^[a-zA-Z0-9_]{3,24}$/.test(normalizedUsername)) return null;
+
+  const row = db()
+    .prepare(
+      `SELECT id, name, username, email, wallet_address
+       FROM users
+       WHERE lower(username) = lower(?)
+       LIMIT 1`,
+    )
+    .get(normalizedUsername) as
+    | { id: number; name: string; username: string; email: string; wallet_address: string | null }
+    | undefined;
+  return row || null;
+}
+
 export function getTransferUserSecrets(senderUserId: number, recipientUserId: number) {
   const sender = db()
     .prepare("SELECT id, wallet_address FROM users WHERE id = ?")

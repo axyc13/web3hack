@@ -1,5 +1,5 @@
 import { db, DbAutomationSettings } from "./db";
-import { findRecipientUser, nzdToCents } from "./fiat";
+import { findRecipientUserByUsername, nzdToCents } from "./fiat";
 
 export type RecipientScope = "saved_only" | "any_registered";
 
@@ -122,9 +122,9 @@ export function updateAutomationSettings(userId: number, input: UpdateAutomation
 }
 
 export function addSavedRecipient(userId: number, identifier: string, nickname?: string | null) {
-  const recipient = findRecipientUser(identifier);
+  const recipient = findRecipientUserByUsername(identifier);
   if (!recipient) {
-    throw new Error("No PocketRail user found for that username or wallet address.");
+    throw new Error("No PocketRail user found for that username.");
   }
   if (recipient.id === userId) {
     throw new Error("You cannot save yourself as a recipient.");
@@ -246,7 +246,7 @@ export function findSavedRecipientByAlias(userId: number, identifier: string) {
     return recipient;
   }
 
-  const matchedUser = findRecipientUser(identifier);
+  const matchedUser = findRecipientUserByUsername(identifier);
   if (!matchedUser) {
     return null;
   }

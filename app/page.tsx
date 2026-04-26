@@ -97,6 +97,13 @@ type PreparedTransfer = {
   };
 };
 
+type RecipientPreview = {
+  id: number;
+  name: string;
+  username: string;
+  walletAddress: string | null;
+};
+
 type FxState = {
   rate: number;
   preferredCurrency: string;
@@ -245,6 +252,8 @@ export default function Home() {
   const [fiatAccount, setFiatAccount] = useState<FiatAccountState | null>(null);
   const [fx, setFx] = useState<FxState>({ rate: 1, preferredCurrency: "NZD" });
   const [recipient, setRecipient] = useState("");
+  const [recipientPreview, setRecipientPreview] = useState<RecipientPreview | null>(null);
+  const [recipientPreviewStatus, setRecipientPreviewStatus] = useState("");
   const [amount, setAmount] = useState("");
   const [authStatus, setAuthStatus] = useState("");
   const [sendStatus, setSendStatus] = useState("");
@@ -327,6 +336,46 @@ export default function Home() {
     void loadTransactions();
     void loadBalances();
   }, [user?.walletAddress]);
+
+  useEffect(() => {
+    if (!user) return;
+    const trimmedRecipient = recipient.trim();
+    if (!trimmedRecipient) {
+      setRecipientPreview(null);
+      setRecipientPreviewStatus("");
+      return;
+    }
+
+    let cancelled = false;
+    setRecipientPreviewStatus("Checking recipient...");
+    const timeout = window.setTimeout(async () => {
+      try {
+        const response = await fetch("/api/app/recipient", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipient: trimmedRecipient }),
+        });
+        const data = (await response.json()) as { recipient?: RecipientPreview | null };
+        if (cancelled) return;
+        if (!response.ok || !data.recipient) {
+          setRecipientPreview(null);
+          setRecipientPreviewStatus("No matching PocketRail user found yet.");
+          return;
+        }
+        setRecipientPreview(data.recipient);
+        setRecipientPreviewStatus("");
+      } catch {
+        if (cancelled) return;
+        setRecipientPreview(null);
+        setRecipientPreviewStatus("Could not check recipient.");
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [recipient, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -692,7 +741,7 @@ export default function Home() {
   async function saveRecipient(identifier: string, nickname = "") {
     const trimmedIdentifier = identifier.trim();
     if (!trimmedIdentifier) {
-      setAutomationError("Enter a username or wallet address to save a recipient.");
+      setAutomationError("Enter a username to save a recipient.");
       return;
     }
     setAutomationBusy(true);
@@ -1496,21 +1545,31 @@ export default function Home() {
                       <option value="custom">Create a new recipient</option>
                       {savedRecipients.map((savedRecipient) => (
                         <option key={savedRecipient.id} value={savedRecipient.id}>
-                          {recipientDisplayName(savedRecipient)} (@{savedRecipient.username})
+                          {recipientDisplayName(savedRecipient)} (@{savedRecipient.username}) - {shortAddress(savedRecipient.walletAddress || "")}
                         </option>
                       ))}
                     </select>
                   </label>
 
                   <label>
-                    Recipient name or Wallet address
+                    Recipient username
                     <input
                       value={recipient}
                       onChange={(e) => setRecipient(e.target.value)}
-                      placeholder="@username or wallet address"
+                      placeholder="@username"
                       required
                     />
                   </label>
+
+                  {recipientPreview ? (
+                    <div className="recipient-resolved-card">
+                      <span className="section-label">Matched recipient</span>
+                      <strong>{recipientPreview.name} (@{recipientPreview.username})</strong>
+                      <small>{recipientPreview.walletAddress || "Wallet address unavailable"}</small>
+                    </div>
+                  ) : recipientPreviewStatus ? (
+                    <p className="muted-copy compact-copy">{recipientPreviewStatus}</p>
+                  ) : null}
 
                   <div className="action-list inline-actions">
                     <button

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { findRecipientUser } from "@/lib/fiat";
+import { findRecipientUserByUsername } from "@/lib/fiat";
 import { findSavedRecipientByAlias, getAutomationOverview, reviewAutomationTransfer } from "@/lib/automation";
 import { prepareAppTransfer } from "@/lib/app-transfers";
 import { requireUser } from "@/lib/auth";
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
           properties: {
             recipient: {
               type: "string",
-              description: "PocketRail username, @username, nickname hint, or wallet address.",
+              description: "PocketRail username, @username, or saved-recipient nickname hint.",
             },
             amountNzd: {
               type: "string",
@@ -179,7 +179,7 @@ export async function POST(request: Request) {
           const amountNzd = typeof args.amountNzd === "string" ? args.amountNzd : "";
           const savedRecipient = findSavedRecipientByAlias(user.id, recipientInput);
           const resolvedRecipientInput = savedRecipient ? `@${savedRecipient.username}` : recipientInput;
-          const resolvedRecipient = findRecipientUser(resolvedRecipientInput);
+          const resolvedRecipient = findRecipientUserByUsername(resolvedRecipientInput);
 
           if (!resolvedRecipient) {
             transferProposal = null;
@@ -187,7 +187,7 @@ export async function POST(request: Request) {
               status: "needs_recipient_clarification",
               amountNzd,
               reasons: [
-                "I couldn't match that recipient to a PocketRail account. Try a saved nickname, @username, or wallet address.",
+                "I couldn't match that recipient to a PocketRail account. Try a saved nickname or @username.",
               ],
               requiresConfirmation: true,
             };
