@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { KeyRound } from "lucide-react";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useCreateWallet, usePrivy, useWallets } from "@privy-io/react-auth";
 import type { ConnectedWallet } from "@privy-io/react-auth";
 
 type WalletStateInput = {
@@ -41,7 +41,8 @@ function PrivyWalletButtonInner({
   onWallet: (address: string) => void;
   onStateChange?: (input: WalletStateInput) => void;
 }) {
-  const { connectOrCreateWallet, ready, user } = usePrivy();
+  const { authenticated, login, ready, user } = usePrivy();
+  const { createWallet } = useCreateWallet();
   const { wallets } = useWallets();
   const selectedWallet = wallets.find((wallet) => wallet.walletClientType === "privy" && wallet.address);
   const onWalletRef = useRef(onWallet);
@@ -68,12 +69,28 @@ function PrivyWalletButtonInner({
     });
   }, [user?.id, wallets]);
 
+  async function handleClick() {
+    if (!ready) return;
+
+    if (!authenticated) {
+      login();
+      return;
+    }
+
+    if (selectedWallet?.address) {
+      onWalletRef.current(selectedWallet.address);
+      return;
+    }
+
+    await createWallet();
+  }
+
   return (
     <button
       type="button"
       className="secondary"
       disabled={!ready}
-      onClick={() => connectOrCreateWallet()}
+      onClick={() => void handleClick()}
     >
       <KeyRound size={17} /> {label || "Create wallet with email"}
     </button>

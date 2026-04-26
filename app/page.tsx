@@ -1031,20 +1031,6 @@ export default function Home() {
               <p>Profile, activity, and send flow stay connected in a single experience.</p>
             </article>
           </div>
-          <div className="showcase-metrics">
-            <div>
-              <strong>dNZD</strong>
-              <span>Settlement asset</span>
-            </div>
-            <div>
-              <strong>Base</strong>
-              <span>Sepolia testnet</span>
-            </div>
-            <div>
-              <strong>Live FX</strong>
-              <span>Localized display</span>
-            </div>
-          </div>
         </section>
 
         <section className="auth-card surface-panel">
@@ -1122,7 +1108,7 @@ export default function Home() {
                   </p>
                 )}
                 <PrivyWalletButton
-                  label="Create wallet with email"
+                  label="Create your PocketRail wallet"
                   onWallet={(address) => {
                     setAuthError("");
                     setForm((current) => ({ ...current, walletAddress: address }));
@@ -1135,16 +1121,6 @@ export default function Home() {
                 <p className="field-hint">
                   Every PocketRail account uses an automatically generated Privy wallet. We create and reconnect it through your email login so dNZD sends can use sponsored gas.
                 </p>
-                <label>
-                  Privy wallet address
-                  <input
-                    value={form.walletAddress}
-                    onChange={(event) => setForm({ ...form, walletAddress: event.target.value })}
-                    placeholder="0x..."
-                    required
-                    readOnly
-                  />
-                </label>
               </div>
             )}
 
