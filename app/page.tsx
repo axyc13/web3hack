@@ -157,7 +157,8 @@ type ProfileFormState = {
 type TransferConfirmation = {
   source: "manual" | "ai";
   amountNzd: string;
-  amountValue: number;
+  amountNzdValue: number;
+  amountDisplayValue: number;
   fromWalletAddress: string;
   recipientInput: string;
   prepared: PreparedTransfer;
@@ -189,7 +190,7 @@ const erc20BalanceAbi = [
 const erc20Interface = new Interface(erc20BalanceAbi);
 const DASHBOARD_VIEWS: { id: DashboardView; label: string; hint: string }[] = [
   { id: "overview", label: "Overview", hint: "Balance and shortcuts" },
-  { id: "pay", label: "Pay", hint: "Send dNZD" },
+  { id: "pay", label: "Pay", hint: "Send money" },
   { id: "activity", label: "Transaction History", hint: "Transactions and settlement" },
 ];
 const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
@@ -773,29 +774,43 @@ export default function Home() {
   async function requestTransferConfirmation(input: {
     source: "manual" | "ai";
     recipient: string;
-    amountNzd: string;
+    amountDisplay?: string;
+    amountNzd?: string;
     walletAddress: string;
   }) {
-    const amountValue = Number(input.amountNzd);
-    if (!Number.isFinite(amountValue) || amountValue <= 0) {
-      throw new Error("Enter a dNZD amount greater than 0.");
+    const settlementRate = fx.rate || 1;
+    const amountDisplayValue = input.amountDisplay != null
+      ? Number(input.amountDisplay)
+      : Number(input.amountNzd || "0") * settlementRate;
+    const amountNzdValue = input.amountNzd != null
+      ? Number(input.amountNzd)
+      : amountDisplayValue / settlementRate;
+
+    if (!Number.isFinite(amountDisplayValue) || amountDisplayValue <= 0) {
+      throw new Error("Enter an amount greater than 0.");
     }
-    if (bankBalanceNzd < amountValue) {
-      throw new Error("Insufficient dNZD balance.");
+    if (!Number.isFinite(amountNzdValue) || amountNzdValue <= 0) {
+      throw new Error("Could not calculate the settlement amount for this transfer.");
+    }
+    if (bankBalanceNzd < amountNzdValue) {
+      throw new Error("Insufficient balance.");
     }
     if (!input.walletAddress) {
       throw new Error("Select a wallet to pay from first.");
     }
 
+    const amountNzd = formatSettlementAmount(amountNzdValue);
+
     const prepared = await api<PreparedTransfer>("/api/app/prepare-send", {
       recipient: input.recipient,
-      amountNzd: input.amountNzd,
+      amountNzd,
     });
 
     setTransferConfirmation({
       source: input.source,
-      amountNzd: input.amountNzd,
-      amountValue,
+      amountNzd,
+      amountNzdValue,
+      amountDisplayValue,
       fromWalletAddress: input.walletAddress,
       recipientInput: input.recipient,
       prepared,
@@ -884,7 +899,7 @@ export default function Home() {
       await requestTransferConfirmation({
         source: "manual",
         recipient,
-        amountNzd: amount,
+        amountDisplay: amount,
         walletAddress: activePaymentWallet,
       });
     } catch (err) {
@@ -959,7 +974,7 @@ export default function Home() {
     try {
       const data = await sendFromSelectedWallet(transferConfirmation);
       setSendStatus(
-        `Sent ${formatCurrency(transferConfirmation.amountValue, "NZD", "NZ")} to @${data.recipient.username}.`,
+        `Sent ${formatCurrency(transferConfirmation.amountDisplayValue, displayCurrency, userRegionCode)} to @${data.recipient.username}.`,
       );
       setSendLink(`${BASE_SEPOLIA_EXPLORER}${data.txHash}`);
       setAmount("");
@@ -1017,7 +1032,8 @@ export default function Home() {
   const userRegionCode = user?.regionCode || "NZ";
   const displayCurrency = user?.preferredCurrency || fx.preferredCurrency;
   const displayRegion = REGION_OPTIONS.find((option) => option.code === userRegionCode) || REGION_OPTIONS[0];
-  const bankBalanceDisplay = bankBalanceNzd * (fx.rate || 1);
+  const settlementRate = fx.rate || 1;
+  const bankBalanceDisplay = bankBalanceNzd * settlementRate;
   const embeddedPrivyWallet = privyEthereumWallets.find((wallet) => wallet.walletClientType === "privy");
   const walletOptions = uniqueAddresses(embeddedPrivyWallet?.address ? [embeddedPrivyWallet.address] : []);
   const activePaymentWallet = embeddedPrivyWallet?.address || selectedWalletAddress || user?.walletAddress || "";
@@ -1038,7 +1054,6 @@ export default function Home() {
     ),
   );
   const sendAmountValue = Number(amount);
-  const convertedSendAmount = Number.isFinite(sendAmountValue) ? sendAmountValue * (fx.rate || 1) : 0;
   const latestTransaction = transactions[0];
   const selectedSavedRecipient = savedRecipients.find((savedRecipient) => {
     const normalizedRecipient = recipient.trim().toLowerCase();
@@ -1056,9 +1071,6 @@ export default function Home() {
       : "AI assist only";
   const balanceTimeline = buildBalanceTimeline(transactions, bankBalanceDisplay, fx.rate || 1);
   const activeBalancePoint = balanceTimeline[balanceTimeline.length - 1];
-  const confirmationDisplayAmount = transferConfirmation
-    ? transferConfirmation.amountValue * (fx.rate || 1)
-    : 0;
   const privyStateSync = privyEnabled ? (
     <PrivyWalletStateSync
       onStateChange={({ wallets, privyUserId: nextPrivyUserId }) => {
@@ -1303,7 +1315,7 @@ export default function Home() {
                 </p>
                 <div className="hero-actions">
                   <button className="primary" type="button" onClick={() => setActiveView("pay")}>
-                    <Send size={16} /> Send dNZD
+                    <Send size={16} /> Send money
                   </button>
                   {latestTransaction?.explorerUrl && (
                     <a className="secondary" href={latestTransaction.explorerUrl} target="_blank" rel="noreferrer">
@@ -1416,12 +1428,13 @@ export default function Home() {
                     <div className="profile-box compact-box">
                       <strong>{shortAddress(activePaymentWallet)}</strong>
                       <small>Selected wallet</small>
-                      <small>{shortAmount(dnzdAsset?.balance || "0")} dNZD available</small>
+                      <small>{formatCurrency(bankBalanceDisplay, displayCurrency, user.regionCode)} available to send</small>
                       <small>
                         {activePaymentWalletUsesPrivySponsorship
                           ? "Privy gas sponsorship enabled"
                           : `${shortAmount(gasBalanceEth)} ETH gas balance`}
                       </small>
+                      <small>Settlement happens behind the scenes on Base Sepolia.</small>
                       {!activePaymentWalletIsConnected && (
                         <small>Reconnect your Privy wallet before sending.</small>
                       )}
@@ -1507,14 +1520,14 @@ export default function Home() {
                 </div>
 
                 <label>
-                  dNZD amount
-                  <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
+                  Amount
+                  <div className="amount-input-shell">
+                    <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="25.00" required />
+                    <span className="amount-input-suffix" aria-hidden="true">
+                      {displayCurrency}
+                    </span>
+                  </div>
                 </label>
-                <p className="muted-copy compact-copy">
-                  {Number.isFinite(sendAmountValue) && sendAmountValue > 0
-                    ? `Displayed to you as ${formatCurrency(convertedSendAmount, displayCurrency, user.regionCode)} in ${displayRegion.label}.`
-                    : `Transfers settle in dNZD while your dashboard displays ${displayCurrency}.`}
-                </p>
                 {sendError && <p className="error">{sendError}</p>}
                 {sendStatus && <p className="success">{sendStatus}</p>}
                 {sendLink && (
@@ -1524,7 +1537,7 @@ export default function Home() {
                 )}
                 <button className="primary" disabled={busy}>
                   {busy ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-                  Send dNZD
+                  Send money
                 </button>
               </form>
             </section>
@@ -2042,8 +2055,8 @@ export default function Home() {
 
               <div className="profile-box">
                 <span className="section-label">Amount</span>
-                <strong>{formatCurrency(transferConfirmation.amountValue, "NZD", "NZ")} dNZD</strong>
-                <small>{formatCurrency(confirmationDisplayAmount, displayCurrency, user.regionCode)} {displayCurrency}</small>
+                <strong>{formatCurrency(transferConfirmation.amountDisplayValue, displayCurrency, user.regionCode)}</strong>
+                <small>~ {formatCurrency(transferConfirmation.amountNzdValue, "NZD", "NZ")} dNZD</small>
                 <small>{transferConfirmation.source === "ai" ? "Prepared by AI assistant" : "Prepared manually"}</small>
               </div>
 
@@ -2051,7 +2064,7 @@ export default function Home() {
                 <span className="section-label">Pay from</span>
                 <strong>{shortAddress(transferConfirmation.fromWalletAddress)}</strong>
                 <small>Base Sepolia</small>
-                <small>dNZD transfer with wallet signature</small>
+                <small>Wallet signature authorizes the settlement transfer</small>
               </div>
             </div>
 
@@ -2110,6 +2123,11 @@ function shortAmount(value: string) {
   if (number === 0) return "0";
   if (number < 0.0001) return "<0.0001";
   return number.toLocaleString(undefined, { maximumFractionDigits: 5 });
+}
+
+function formatSettlementAmount(value: number) {
+  if (!Number.isFinite(value)) return "0";
+  return value.toFixed(6).replace(/\.?0+$/, "");
 }
 
 function timeAgo(timestamp: string) {
